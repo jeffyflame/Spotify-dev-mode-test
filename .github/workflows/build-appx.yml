@@ -229,7 +229,7 @@ jobs:
 
                 $_.Value.dependencies.PSObject.Properties |
                   ForEach-Object {
-                    Write-Host "  $($_.Name) $($_.Value.version)"
+                    Write-Host "  $($_.Name) $($_.Value)"
                   }
               }
             }
@@ -330,41 +330,104 @@ jobs:
           Write-Host "TargetArchitecture=$env:TargetArchitecture"
           Write-Host "TargetArch=$env:TargetArch"
 
-      - name: Build and create APPX package
+      - name: Create development certificate and build signed APPX
         shell: pwsh
         run: |
           $project = "${{ steps.locate.outputs.projectPath }}"
           $projectDir = "${{ steps.locate.outputs.projectDir }}"
           $packageDir = Join-Path $projectDir "AppxPackages"
+          $signingDir = Join-Path $projectDir "SigningOutput"
+          $pfxPath = Join-Path $env:RUNNER_TEMP "GlassifySigning.pfx"
+          $cerPath = Join-Path $signingDir "XboxGlassMusic.cer"
+          $cert = $null
+          $thumbprint = $null
 
-          New-Item -ItemType Directory -Path $packageDir -Force | Out-Null
-
-          msbuild $project /t:Build `
-            /p:Configuration=Release `
-            /p:Platform=x64 `
-            /p:PlatformTarget=x64 `
-            /p:_NetCoreFrameworkInjectionNeeded=false `
-            /p:AppxBundle=Never `
-            /p:UapAppxPackageBuildMode=SideloadOnly `
-            /p:AppxPackageSigningEnabled=false `
-            "/p:AppxPackageDir=$packageDir\" `
-            /v:diag 2>&1 |
-              Tee-Object -FilePath (Join-Path $projectDir "build-diagnostic.log")
-
-          if ($LASTEXITCODE -ne 0) {
-            throw "Build failed. See build-diagnostic.log for details."
+          foreach ($path in @($packageDir, $signingDir)) {
+            if (Test-Path $path) {
+              Remove-Item $path -Recurse -Force
+            }
           }
 
-      - name: Upload APPX artifacts
+          New-Item -ItemType Directory -Path $packageDir -Force | Out-Null
+          New-Item -ItemType Directory -Path $signingDir -Force | Out-Null
+
+          try {
+            $cert = New-SelfSignedCertificate `
+              -Type Custom `
+              -Subject "CN=XboxGlassMusic" `
+              -KeyUsage DigitalSignature `
+              -KeyAlgorithm RSA `
+              -KeyLength 2048 `
+              -HashAlgorithm SHA256 `
+              -CertStoreLocation "Cert:\CurrentUser\My" `
+              -TextExtension @(
+                "2.5.29.37={text}1.3.6.1.5.5.7.3.3"
+              ) `
+              -FriendlyName "Glassify Development Signing"
+
+            $thumbprint = $cert.Thumbprint
+            $passwordText = [Guid]::NewGuid().ToString("N") + "aA1!"
+            $password = ConvertTo-SecureString `
+              -String $passwordText -Force -AsPlainText
+
+            Export-PfxCertificate `
+              -Cert $cert `
+              -FilePath $pfxPath `
+              -Password $password | Out-Null
+
+            Export-Certificate `
+              -Cert $cert `
+              -FilePath $cerPath | Out-Null
+
+            $msbuildArgs = @(
+              $project,
+              "/t:Build",
+              "/p:Configuration=Release",
+              "/p:Platform=x64",
+              "/p:PlatformTarget=x64",
+              "/p:_NetCoreFrameworkInjectionNeeded=false",
+              "/p:AppxBundle=Never",
+              "/p:UapAppxPackageBuildMode=SideloadOnly",
+              "/p:AppxPackageSigningEnabled=true",
+              "/p:PackageCertificateKeyFile=$pfxPath",
+              "/p:PackageCertificatePassword=$passwordText",
+              "/p:PackageCertificateThumbprint=",
+              "/p:AppxPackageDir=$packageDir\",
+              "/v:diag"
+            )
+
+            & msbuild @msbuildArgs 2>&1 |
+              Tee-Object -FilePath (Join-Path $projectDir "build-diagnostic.log")
+
+            if ($LASTEXITCODE -ne 0) {
+              throw "Build or signing failed. Check build-diagnostic.log."
+            }
+
+            Write-Host "Signed APPX build completed."
+            Write-Host "Public certificate: $cerPath"
+          }
+          finally {
+            if (Test-Path $pfxPath) {
+              Remove-Item $pfxPath -Force
+            }
+
+            if ($thumbprint) {
+              Remove-Item "Cert:\CurrentUser\My\$thumbprint" `
+                -Force -ErrorAction SilentlyContinue
+            }
+          }
+
+      - name: Upload signed APPX and certificate
         if: success()
         uses: actions/upload-artifact@v4
         with:
-          name: Glassify-APPX
+          name: Glassify-Signed-APPX
           path: |
             **/*.appx
             **/*.msix
             **/*.appxbundle
             **/*.msixbundle
+            **/SigningOutput/XboxGlassMusic.cer
           if-no-files-found: error
 
       - name: Upload diagnostic build log
