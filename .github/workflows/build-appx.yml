@@ -1,178 +1,224 @@
+
 name: Build XboxGlassMusic package
 
 on:
-workflow_dispatch:
-push:
-branches:
-- main
-paths:
-- ‘.cs’
-- ’.xaml’
-- ‘.csproj’
-- ’.sln’
-- ‘**.appxmanifest’
-- ‘.github/workflows/build-appx.yml’
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+    paths:
+      - '**.cs'
+      - '**.xaml'
+      - '**.csproj'
+      - '**.sln'
+      - '**.appxmanifest'
+      - '.github/workflows/build-appx.yml'
 
 permissions:
-contents: read
+  contents: read
 
 jobs:
-build:
-runs-on: windows-2022
+  build:
+    runs-on: windows-2022
 
-steps:
-  - name: Checkout source
-    uses: actions/checkout@v4
-  - name: Setup MSBuild
-    uses: microsoft/setup-msbuild@v2
-  - name: Locate solution and project
-    id: paths
-    shell: pwsh
-    run: |
-      $solution = Get-ChildItem `
-        -Path $env:GITHUB_WORKSPACE `
-        -Recurse -Filter *.sln |
-        Select-Object -First 1
-      $project = Get-ChildItem `
-        -Path $env:GITHUB_WORKSPACE `
-        -Recurse -Filter XboxGlassMusic.csproj |
-        Select-Object -First 1
-      if (-not $solution) {
-        throw "No solution file found."
-      }
-      if (-not $project) {
-        throw "XboxGlassMusic.csproj not found."
-      }
-      "solution=$($solution.FullName)" >> $env:GITHUB_OUTPUT
-      "project=$($project.FullName)" >> $env:GITHUB_OUTPUT
-      "projectDir=$($project.DirectoryName)" >> $env:GITHUB_OUTPUT
-  - name: Clean generated files
-    shell: pwsh
-    run: |
-      $projectDir = "${{ steps.paths.outputs.projectDir }}"
-      foreach ($folder in @("bin", "obj")) {
-        $path = Join-Path $projectDir $folder
-        if (Test-Path $path) {
-          Remove-Item $path -Recurse -Force
-        }
-      }
-  - name: Create temporary signing certificate
-    shell: pwsh
-    run: |
-      $cert = New-SelfSignedCertificate `
-        -Type Custom `
-        -Subject "CN=XboxGlassMusic" `
-        -KeyUsage DigitalSignature `
-        -FriendlyName "XboxGlassMusic temporary package certificate" `
-        -CertStoreLocation "Cert:\CurrentUser\My" `
-        -KeyAlgorithm RSA `
-        -KeyLength 2048 `
-        -HashAlgorithm SHA256 `
-        -NotAfter (Get-Date).AddYears(2)
-      $password = ConvertTo-SecureString `
-        -String "TemporaryBuildPassword123!" `
-        -Force `
-        -AsPlainText
-      Export-PfxCertificate `
-        -Cert $cert `
-        -FilePath "$env:RUNNER_TEMP\signing.pfx" `
-        -Password $password |
-        Out-Null
-      Export-Certificate `
-        -Cert $cert `
-        -FilePath "$env:RUNNER_TEMP\signing.cer" |
-        Out-Null
-  - name: Restore NuGet packages
-    shell: pwsh
-    run: |
-      $project = "${{ steps.paths.outputs.project }}"
-      $log = "$env:RUNNER_TEMP\restore.log"
-      msbuild $project `
-        /t:Restore `
-        /p:Configuration=Release `
-        /p:Platform=x64 `
-        /p:RestoreForce=true `
-        /v:normal *> $log
-      $exitCode = $LASTEXITCODE
-      Get-Content $log -Tail 100
-      if ($exitCode -ne 0) {
-        throw "NuGet restore failed with exit code $exitCode"
-      }
-  - name: Diagnose NuGet framework assets
-    if: always()
-    shell: pwsh
-    run: |
-      $projectDir = "${{ steps.paths.outputs.projectDir }}"
-      $assetsPath = Join-Path $projectDir "obj\project.assets.json"
-      Write-Host "Project directory: $projectDir"
-      Write-Host "project.lock.json exists: $(Test-Path (Join-Path $projectDir 'obj\project.lock.json'))"
-      Write-Host "Root project.lock.json exists: $(Test-Path (Join-Path $projectDir 'project.lock.json'))"
-      Write-Host "packages.lock.json exists: $(Test-Path (Join-Path $projectDir 'packages.lock.json'))"
-      Write-Host "project.assets.json exists: $(Test-Path $assetsPath)"
-      if (Test-Path $assetsPath) {
-        $assets = Get-Content $assetsPath -Raw |
-          ConvertFrom-Json
-        Write-Host "=== Target frameworks ==="
-        $assets.targets.PSObject.Properties.Name
-        Write-Host "=== NuGet libraries ==="
-        $assets.libraries.PSObject.Properties.Name
-        Write-Host "=== Framework dependencies ==="
-        $assets.project.frameworks |
-          ConvertTo-Json -Depth 10
-      }
-  - name: Build and package x64
-    shell: pwsh
-    run: |
-      $solution = "${{ steps.paths.outputs.solution }}"
-      $out = "$env:GITHUB_WORKSPACE\artifacts"
-      $log = "$env:RUNNER_TEMP\msbuild-build.log"
-      New-Item -ItemType Directory -Force -Path $out |
-        Out-Null
-      msbuild $solution `
-        /t:Build `
-        /m `
-        /p:Configuration=Release `
-        /p:Platform=x64 `
-        /p:AppxBundle=Never `
-        /p:UapAppxPackageBuildMode=SideloadOnly `
-        /p:AppxPackageSigningEnabled=true `
-        /p:PackageCertificateKeyFile="$env:RUNNER_TEMP\signing.pfx" `
-        /p:PackageCertificatePassword="TemporaryBuildPassword123!" `
-        /p:AppxPackageDir="$out\\" `
-        /v:diag *> $log
-      $exitCode = $LASTEXITCODE
-      if ($exitCode -ne 0) {
-        Write-Host "=== Relevant MSBuild diagnostics ==="
-        Select-String `
-          -Path $log `
-          -Pattern "InjectNetCoreFrameworkBlockIfLockFileExists|ProjectLockFile|NetCoreFramework|requires the .NET Framework|error NU" `
-          -Context 5, 10
-        Write-Host "=== Last 100 log lines ==="
-        Get-Content $log -Tail 100
-        throw "MSBuild failed with exit code $exitCode"
-      }
-      Copy-Item `
-        "$env:RUNNER_TEMP\signing.cer" `
-        "$out\XboxGlassMusic-signing.cer"
-      Write-Host "=== Generated package files ==="
-      Get-ChildItem $out -Recurse
-  - name: Upload build diagnostics
-    if: always()
-    uses: actions/upload-artifact@v4
-    with:
-      name: build-diagnostics
-      path: |
-        ${{ runner.temp }}/restore.log
-        ${{ runner.temp }}/msbuild-build.log
-        ${{ steps.paths.outputs.projectDir }}/obj/project.assets.json
-        ${{ steps.paths.outputs.projectDir }}/obj/project.nuget.cache
-      if-no-files-found: warn
-      retention-days: 7
-  - name: Upload x64 APPX package
-    if: success()
-    uses: actions/upload-artifact@v4
-    with:
-      name: XboxGlassMusic-x64-appx
-      path: artifacts/**
-      if-no-files-found: error
-      retention-days: 30
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v4
+
+      - name: Setup MSBuild
+        uses: microsoft/setup-msbuild@v2
+
+      - name: Locate solution
+        id: project
+        shell: pwsh
+        run: |
+          $solution = Get-ChildItem `
+            -Path $env:GITHUB_WORKSPACE `
+            -Recurse `
+            -Filter *.sln |
+            Select-Object -First 1
+
+          if (-not $solution) {
+            throw "No solution file found."
+          }
+
+          "solution=$($solution.FullName)" |
+            Out-File -FilePath $env:GITHUB_OUTPUT -Append
+
+      - name: Clean old build files
+        shell: pwsh
+        run: |
+          Get-ChildItem `
+            -Path $env:GITHUB_WORKSPACE `
+            -Directory `
+            -Recurse `
+            -Force `
+            -Filter bin `
+            -ErrorAction SilentlyContinue |
+            Sort-Object { $_.FullName.Length } -Descending |
+            ForEach-Object {
+              Remove-Item -LiteralPath $_.FullName -Recurse -Force -ErrorAction SilentlyContinue
+            }
+
+          Get-ChildItem `
+            -Path $env:GITHUB_WORKSPACE `
+            -Directory `
+            -Recurse `
+            -Force `
+            -Filter obj `
+            -ErrorAction SilentlyContinue |
+            Sort-Object { $_.FullName.Length } -Descending |
+            ForEach-Object {
+              Remove-Item -LiteralPath $_.FullName -Recurse -Force -ErrorAction SilentlyContinue
+            }
+
+      - name: Create temporary signing certificate
+        shell: pwsh
+        run: |
+          $cert = New-SelfSignedCertificate `
+            -Type Custom `
+            -Subject "CN=XboxGlassMusic" `
+            -KeyUsage DigitalSignature `
+            -FriendlyName "XboxGlassMusic temporary package certificate" `
+            -CertStoreLocation "Cert:\CurrentUser\My" `
+            -KeyAlgorithm RSA `
+            -KeyLength 2048 `
+            -HashAlgorithm SHA256 `
+            -NotAfter (Get-Date).AddYears(2)
+
+          $password = ConvertTo-SecureString `
+            -String "TemporaryBuildPassword123!" `
+            -Force `
+            -AsPlainText
+
+          Export-PfxCertificate `
+            -Cert $cert `
+            -FilePath "$env:RUNNER_TEMP\signing.pfx" `
+            -Password $password |
+            Out-Null
+
+          Export-Certificate `
+            -Cert $cert `
+            -FilePath "$env:RUNNER_TEMP\signing.cer" |
+            Out-Null
+
+      - name: Restore NuGet packages
+        shell: pwsh
+        run: |
+          msbuild "${{ steps.project.outputs.solution }}" `
+            /t:Restore `
+            /p:Configuration=Release `
+            /p:Platform=x64 `
+            /v:minimal
+
+          if ($LASTEXITCODE -ne 0) {
+            throw "NuGet restore failed with exit code $LASTEXITCODE"
+          }
+
+      - name: Diagnose NuGet assets
+        if: always()
+        shell: pwsh
+        run: |
+          $files = Get-ChildItem `
+            -Path $env:GITHUB_WORKSPACE `
+            -Recurse `
+            -File `
+            -Force `
+            -ErrorAction SilentlyContinue |
+            Where-Object {
+              $_.Name -in @(
+                "project.assets.json",
+                "project.nuget.cache",
+                "packages.lock.json",
+                "project.lock.json"
+              )
+            }
+
+          foreach ($file in $files) {
+            Write-Host "`n=== $($file.FullName) ==="
+
+            if ($file.Name -eq "project.assets.json") {
+              try {
+                $assets = Get-Content $file.FullName -Raw |
+                  ConvertFrom-Json
+
+                Write-Host "TARGETS:"
+                $assets.targets.PSObject.Properties.Name
+
+                Write-Host "LIBRARIES:"
+                $assets.libraries.PSObject.Properties.Name
+
+                Write-Host "FRAMEWORKS:"
+                $assets.project.frameworks |
+                  ConvertTo-Json -Depth 8
+              }
+              catch {
+                Write-Host "Could not parse assets: $_"
+              }
+            }
+          }
+
+      - name: Build and package x64
+        shell: pwsh
+        run: |
+          $out = "$env:GITHUB_WORKSPACE\artifacts"
+          $log = "$env:RUNNER_TEMP\msbuild.log"
+
+          New-Item -ItemType Directory -Force -Path $out |
+            Out-Null
+
+          msbuild "${{ steps.project.outputs.solution }}" `
+            /t:Build `
+            /m `
+            /p:Configuration=Release `
+            /p:Platform=x64 `
+            /p:AppxBundle=Never `
+            /p:UapAppxPackageBuildMode=SideloadOnly `
+            /p:AppxPackageSigningEnabled=true `
+            /p:PackageCertificateKeyFile="$env:RUNNER_TEMP\signing.pfx" `
+            /p:PackageCertificatePassword="TemporaryBuildPassword123!" `
+            /p:AppxPackageDir="$out\\" `
+            /v:diag *> $log
+
+          $buildExitCode = $LASTEXITCODE
+
+          Get-Content $log -Tail 100
+
+          if ($buildExitCode -ne 0) {
+            Write-Host "Relevant build errors:"
+
+            Select-String `
+              -Path $log `
+              -Pattern "NetCoreFramework|requires the .NET Framework|error NU|WMC9999" `
+              -Context 5, 10
+
+            throw "MSBuild failed with exit code $buildExitCode"
+          }
+
+          Copy-Item `
+            "$env:RUNNER_TEMP\signing.cer" `
+            "$out\XboxGlassMusic-signing.cer"
+
+          Get-ChildItem $out -Recurse
+
+      - name: Upload NuGet diagnostic files
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: nuget-diagnostics
+          path: |
+            **/obj/project.assets.json
+            **/obj/project.nuget.cache
+            **/project.lock.json
+            **/packages.lock.json
+          if-no-files-found: warn
+          retention-days: 7
+
+      - name: Upload app package
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: XboxGlassMusic-x64-appx
+          path: artifacts/**
+          if-no-files-found: error
+          retention-days: 30
