@@ -239,7 +239,6 @@ jobs:
             Write-Host "project.assets.json was not found."
           }
 
-      # NEW DIAGNOSTIC STEP
       - name: Inspect CoreRuntime task definition
         if: always()
         shell: pwsh
@@ -293,6 +292,41 @@ jobs:
               }
             }
           }
+
+      # ADDED DIAGNOSTIC STEP
+      - name: Check CoreRuntime architecture properties
+        if: always()
+        shell: pwsh
+        run: |
+          $project = "${{ steps.locate.outputs.projectPath }}"
+          $targets = "C:\Program Files (x86)\Microsoft SDKs\UWPNuGetPackages\microsoft.net.uwpcoreruntimesdk\2.2.14\tools\CoreRuntime\Microsoft.Net.CoreRuntime.targets"
+
+          Write-Host "=== Architecture property assignments in targets file ==="
+
+          if (Test-Path $targets) {
+            Select-String -Path $targets `
+              -Pattern "_PlatformTargetForCoreRuntime" `
+              -Context 3,3
+          } else {
+            Write-Host "Expected targets file not found at: $targets"
+          }
+
+          Write-Host "`n=== MSBuild architecture properties (evaluation) ==="
+
+          & msbuild $project `
+            "-getProperty:_PlatformTargetForCoreRuntime,PlatformTarget,Platform,TargetArchitecture,TargetArch,TargetRuntime,TargetPlatformIdentifier" `
+            /p:Configuration=Release `
+            /p:Platform=x64
+
+          if ($LASTEXITCODE -ne 0) {
+            Write-Host "MSBuild property evaluation failed; continuing with the build workflow."
+          }
+
+          Write-Host "`n=== Environment variables (supplementary only) ==="
+          Write-Host "Platform=$env:Platform"
+          Write-Host "PlatformTarget=$env:PlatformTarget"
+          Write-Host "TargetArchitecture=$env:TargetArchitecture"
+          Write-Host "TargetArch=$env:TargetArch"
 
       - name: Build and create APPX package
         shell: pwsh
