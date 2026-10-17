@@ -150,6 +150,35 @@ jobs:
                 Write-Host "Could not read assets: $_"
               }
             }
+      - name: Diagnose framework injection
+        shell: pwsh
+        run: |
+          $project = "${{ steps.locate.outputs.projectPath }}"
+          Write-Host "=== Relevant MSBuild properties ==="
+          & msbuild $project `
+            "-getProperty:ProjectLockFile,MSBuildProjectExtensionsPath,ResolveNuGetPackages,AppxPackage,_NetCoreFrameworkInjectionNeeded" `
+            /p:Configuration=Release `
+            /p:Platform=x64
+          if ($LASTEXITCODE -ne 0) {
+            Write-Host "Property query failed; continuing with file inspection."
+          }
+          Write-Host "=== Files in project obj directory ==="
+          $obj = Join-Path "${{ steps.locate.outputs.projectDir }}" "obj"
+          if (Test-Path $obj) {
+            Get-ChildItem $obj -Recurse -File |
+              Where-Object {
+                $_.Name -in @(
+                  "project.lock.json",
+                  "project.assets.json",
+                  "packages.lock.json"
+                )
+              } |
+              ForEach-Object {
+                Write-Host $_.FullName
+              }
+          } else {
+            Write-Host "No obj directory found."
+          }
       - name: Build and create APPX package
         shell: pwsh
         run: |
@@ -194,7 +223,6 @@ jobs:
             }
           if (-not $packages) {
             Write-Host "No package found in artifacts."
-            Write-Host "Checking project output directories..."
             Get-ChildItem `
               -Path "${{ steps.locate.outputs.projectDir }}" `
               -Recurse `
