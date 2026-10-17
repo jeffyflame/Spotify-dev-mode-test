@@ -1,3 +1,4 @@
+
 <?xml version="1.0" encoding="utf-8"?>
 <Package xmlns="http://schemas.microsoft.com/appx/manifest/foundation/windows10"
          xmlns:uap="http://schemas.microsoft.com/appx/manifest/uap/windows10"
@@ -10,6 +11,10 @@
             Publisher="CN=XboxGlassMusic"
             Version="1.0.0.0" />
 
+  <mp:PhoneIdentity
+      PhoneProductId="a4f6d0a4-6c9e-4e29-9a21-3f5b1f7a0d21"
+      PhonePublisherId="00000000-0000-0000-0000-000000000000" />
+
   <Properties>
     <DisplayName>Glassify</DisplayName>
     <PublisherDisplayName>Glassify</PublisherDisplayName>
@@ -17,9 +22,10 @@
   </Properties>
 
   <Dependencies>
-    <TargetDeviceFamily Name="Windows.Universal"
-                        MinVersion="10.0.17763.0"
-                        MaxVersionTested="10.0.19041.0" />
+    <TargetDeviceFamily
+        Name="Windows.Universal"
+        MinVersion="10.0.17763.0"
+        MaxVersionTested="10.0.19041.0" />
   </Dependencies>
 
   <Resources>
@@ -30,17 +36,21 @@
     <Application Id="App"
                  Executable="$targetnametoken$.exe"
                  EntryPoint="XboxGlassMusic.App">
+
       <uap:VisualElements
           DisplayName="Glassify"
           Description="Liquid Glass music player"
           BackgroundColor="#10131B"
           Square150x150Logo="Assets\StoreLogo.png"
           Square44x44Logo="Assets\StoreLogo.png">
+
         <uap:DefaultTile
             Wide310x150Logo="Assets\StoreLogo.png" />
+
         <uap:SplashScreen
             Image="Assets\StoreLogo.png"
             BackgroundColor="#10131B" />
+
       </uap:VisualElements>
     </Application>
   </Applications>
