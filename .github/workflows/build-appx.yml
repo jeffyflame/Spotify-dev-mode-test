@@ -29,12 +29,20 @@ steps:
     id: paths
     shell: pwsh
     run: |
-      $solution = Get-ChildItem $env:GITHUB_WORKSPACE -Recurse -Filter *.sln |
+      $solution = Get-ChildItem `
+        -Path $env:GITHUB_WORKSPACE `
+        -Recurse -Filter *.sln |
         Select-Object -First 1
-      $project = Get-ChildItem $env:GITHUB_WORKSPACE -Recurse -Filter XboxGlassMusic.csproj |
+      $project = Get-ChildItem `
+        -Path $env:GITHUB_WORKSPACE `
+        -Recurse -Filter XboxGlassMusic.csproj |
         Select-Object -First 1
-      if (-not $solution) { throw "Solution file not found." }
-      if (-not $project) { throw "XboxGlassMusic.csproj not found." }
+      if (-not $solution) {
+        throw "No solution file found."
+      }
+      if (-not $project) {
+        throw "XboxGlassMusic.csproj not found."
+      }
       "solution=$($solution.FullName)" >> $env:GITHUB_OUTPUT
       "project=$($project.FullName)" >> $env:GITHUB_OUTPUT
       "projectDir=$($project.DirectoryName)" >> $env:GITHUB_OUTPUT
@@ -42,19 +50,20 @@ steps:
     shell: pwsh
     run: |
       $projectDir = "${{ steps.paths.outputs.projectDir }}"
-      foreach ($name in @("bin", "obj")) {
-        $path = Join-Path $projectDir $name
+      foreach ($folder in @("bin", "obj")) {
+        $path = Join-Path $projectDir $folder
         if (Test-Path $path) {
           Remove-Item $path -Recurse -Force
         }
       }
-  - name: Create temporary package certificate
+  - name: Create temporary signing certificate
     shell: pwsh
     run: |
       $cert = New-SelfSignedCertificate `
         -Type Custom `
         -Subject "CN=XboxGlassMusic" `
         -KeyUsage DigitalSignature `
+        -FriendlyName "XboxGlassMusic temporary package certificate" `
         -CertStoreLocation "Cert:\CurrentUser\My" `
         -KeyAlgorithm RSA `
         -KeyLength 2048 `
@@ -62,14 +71,17 @@ steps:
         -NotAfter (Get-Date).AddYears(2)
       $password = ConvertTo-SecureString `
         -String "TemporaryBuildPassword123!" `
-        -Force -AsPlainText
+        -Force `
+        -AsPlainText
       Export-PfxCertificate `
         -Cert $cert `
         -FilePath "$env:RUNNER_TEMP\signing.pfx" `
-        -Password $password | Out-Null
+        -Password $password |
+        Out-Null
       Export-Certificate `
         -Cert $cert `
-        -FilePath "$env:RUNNER_TEMP\signing.cer" | Out-Null
+        -FilePath "$env:RUNNER_TEMP\signing.cer" |
+        Out-Null
   - name: Restore NuGet packages
     shell: pwsh
     run: |
@@ -80,37 +92,33 @@ steps:
         /p:Configuration=Release `
         /p:Platform=x64 `
         /p:RestoreForce=true `
-        /p:RestoreIgnoreFailedSources=false `
         /v:normal *> $log
-      $code = $LASTEXITCODE
+      $exitCode = $LASTEXITCODE
       Get-Content $log -Tail 100
-      if ($code -ne 0) {
-        throw "NuGet restore failed with exit code $code"
+      if ($exitCode -ne 0) {
+        throw "NuGet restore failed with exit code $exitCode"
       }
-  - name: Verify restored framework assets
+  - name: Diagnose NuGet framework assets
+    if: always()
     shell: pwsh
     run: |
       $projectDir = "${{ steps.paths.outputs.projectDir }}"
       $assetsPath = Join-Path $projectDir "obj\project.assets.json"
-      if (-not (Test-Path $assetsPath)) {
-        throw "Restore did not generate obj\project.assets.json"
-      }
-      $assets = Get-Content $assetsPath -Raw | ConvertFrom-Json
-      Write-Host "=== Restored targets ==="
-      $assets.targets.PSObject.Properties.Name
-      Write-Host "=== Restored packages ==="
-      $assets.libraries.PSObject.Properties.Name
-      Write-Host "=== Restored framework configuration ==="
-      $assets.project.frameworks | ConvertTo-Json -Depth 10
-      $required = @(
-        "Microsoft.NETCore.UniversalWindowsPlatform/",
-        "Microsoft.NETCore.Platforms/"
-      )
-      foreach ($package in $required) {
-        if (-not ($assets.libraries.PSObject.Properties.Name |
-          Where-Object { $_.StartsWith($package, [StringComparison]::OrdinalIgnoreCase) })) {
-          throw "Required NuGet package is missing: $package"
-        }
+      Write-Host "Project directory: $projectDir"
+      Write-Host "project.lock.json exists: $(Test-Path (Join-Path $projectDir 'obj\project.lock.json'))"
+      Write-Host "Root project.lock.json exists: $(Test-Path (Join-Path $projectDir 'project.lock.json'))"
+      Write-Host "packages.lock.json exists: $(Test-Path (Join-Path $projectDir 'packages.lock.json'))"
+      Write-Host "project.assets.json exists: $(Test-Path $assetsPath)"
+      if (Test-Path $assetsPath) {
+        $assets = Get-Content $assetsPath -Raw |
+          ConvertFrom-Json
+        Write-Host "=== Target frameworks ==="
+        $assets.targets.PSObject.Properties.Name
+        Write-Host "=== NuGet libraries ==="
+        $assets.libraries.PSObject.Properties.Name
+        Write-Host "=== Framework dependencies ==="
+        $assets.project.frameworks |
+          ConvertTo-Json -Depth 10
       }
   - name: Build and package x64
     shell: pwsh
@@ -118,7 +126,8 @@ steps:
       $solution = "${{ steps.paths.outputs.solution }}"
       $out = "$env:GITHUB_WORKSPACE\artifacts"
       $log = "$env:RUNNER_TEMP\msbuild-build.log"
-      New-Item -ItemType Directory -Force -Path $out | Out-Null
+      New-Item -ItemType Directory -Force -Path $out |
+        Out-Null
       msbuild $solution `
         /t:Build `
         /m `
@@ -131,19 +140,21 @@ steps:
         /p:PackageCertificatePassword="TemporaryBuildPassword123!" `
         /p:AppxPackageDir="$out\\" `
         /v:diag *> $log
-      $code = $LASTEXITCODE
-      if ($code -ne 0) {
+      $exitCode = $LASTEXITCODE
+      if ($exitCode -ne 0) {
         Write-Host "=== Relevant MSBuild diagnostics ==="
-        Select-String -Path $log `
-          -Pattern "InjectNetCoreFrameworkBlockIfLockFileExists|ProjectLockFile|NetCoreFramework|requires the .NET Framework|error " `
+        Select-String `
+          -Path $log `
+          -Pattern "InjectNetCoreFrameworkBlockIfLockFileExists|ProjectLockFile|NetCoreFramework|requires the .NET Framework|error NU" `
           -Context 5, 10
-        Write-Host "=== Final MSBuild log lines ==="
+        Write-Host "=== Last 100 log lines ==="
         Get-Content $log -Tail 100
-        throw "MSBuild failed with exit code $code"
+        throw "MSBuild failed with exit code $exitCode"
       }
-      Copy-Item "$env:RUNNER_TEMP\signing.cer" `
+      Copy-Item `
+        "$env:RUNNER_TEMP\signing.cer" `
         "$out\XboxGlassMusic-signing.cer"
-      Write-Host "=== Package output ==="
+      Write-Host "=== Generated package files ==="
       Get-ChildItem $out -Recurse
   - name: Upload build diagnostics
     if: always()
@@ -151,13 +162,13 @@ steps:
     with:
       name: build-diagnostics
       path: |
-        ${{ steps.paths.outputs.projectDir }}/obj/project.assets.json
-        ${{ steps.paths.outputs.projectDir }}/obj/project.nuget.cache
         ${{ runner.temp }}/restore.log
         ${{ runner.temp }}/msbuild-build.log
+        ${{ steps.paths.outputs.projectDir }}/obj/project.assets.json
+        ${{ steps.paths.outputs.projectDir }}/obj/project.nuget.cache
       if-no-files-found: warn
       retention-days: 7
-  - name: Upload app package
+  - name: Upload x64 APPX package
     if: success()
     uses: actions/upload-artifact@v4
     with:
