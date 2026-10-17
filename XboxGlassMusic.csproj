@@ -105,19 +105,11 @@
 
   <Import Project="$(MSBuildExtensionsPath)\Microsoft\WindowsXaml\v$(VisualStudioVersion)\Microsoft.Windows.UI.Xaml.CSharp.targets" />
 
-  <!-- Workaround: switch to the legacy framework-injection path. -->
-  <Target Name="UseLegacyFrameworkInjection"
-          BeforeTargets="ComputeNetCoreFrameworkInjectionParameters">
+  <!-- Workaround: disable the failing framework-injection targets. -->
+  <Target Name="DisableNetCoreFrameworkInjection"
+          BeforeTargets="InjectNetCoreFrameworkBlockIfLockFileExists;InjectNetCoreFramework">
     <PropertyGroup>
-      <ResolveNuGetPackages>false</ResolveNuGetPackages>
-    </PropertyGroup>
-  </Target>
-
-  <!-- Restore normal NuGet resolution after framework injection. -->
-  <Target Name="RestoreNuGetResolution"
-          AfterTargets="InjectNetCoreFramework">
-    <PropertyGroup>
-      <ResolveNuGetPackages>true</ResolveNuGetPackages>
+      <_NetCoreFrameworkInjectionNeeded>false</_NetCoreFrameworkInjectionNeeded>
     </PropertyGroup>
   </Target>
 
