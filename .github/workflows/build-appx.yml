@@ -176,17 +176,13 @@ jobs:
             try {
               $data = Get-Content $assets -Raw | ConvertFrom-Json
 
-              # NEW: print every restored package.
               Write-Host "`n=== ALL RESTORED PACKAGES ==="
-
               $data.libraries.PSObject.Properties |
                 ForEach-Object {
                   Write-Host $_.Name
                 }
 
-              # NEW: print dependencies declared by each resolved package.
               Write-Host "`n=== ALL TARGET PACKAGE DEPENDENCIES ==="
-
               $data.targets.PSObject.Properties | ForEach-Object {
                 Write-Host "`nTarget: $($_.Name)"
 
@@ -212,7 +208,6 @@ jobs:
               $data.project.frameworks.PSObject.Properties.Name
 
               Write-Host "`n=== .NET Framework-related package entries ==="
-
               $data.targets.PSObject.Properties | ForEach-Object {
                 $targetName = $_.Name
 
@@ -226,7 +221,6 @@ jobs:
               }
 
               Write-Host "`n=== Direct project dependencies ==="
-
               $data.project.frameworks.PSObject.Properties | ForEach-Object {
                 $frameworkName = $_.Name
                 Write-Host "Framework: $frameworkName"
@@ -257,6 +251,7 @@ jobs:
           msbuild $project /t:Build `
             /p:Configuration=Release `
             /p:Platform=x64 `
+            /p:_NetCoreFrameworkInjectionNeeded=false `
             /p:AppxBundle=Never `
             /p:UapAppxPackageBuildMode=SideloadOnly `
             /p:AppxPackageSigningEnabled=false `
