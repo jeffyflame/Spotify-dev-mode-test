@@ -1,6 +1,4 @@
-
 name: Build XboxGlassMusic APPX
-
 on:
   workflow_dispatch:
   push:
@@ -16,66 +14,51 @@ on:
       - '**.targets'
       - 'packages.config'
       - '.github/workflows/build-appx.yml'
-
 permissions:
   contents: read
-
 jobs:
   build:
     runs-on: windows-2022
-
     steps:
       - name: Checkout source
         uses: actions/checkout@v4
-
       - name: Setup MSBuild
         uses: microsoft/setup-msbuild@v2
-
       - name: Locate project
         id: locate
         shell: pwsh
         run: |
           $root = $env:GITHUB_WORKSPACE
-
           $project = Get-ChildItem `
             -Path $root `
             -Recurse `
             -File `
             -Filter XboxGlassMusic.csproj |
             Select-Object -First 1
-
           if (-not $project) {
             throw "XboxGlassMusic.csproj was not found."
           }
-
           $solution = Get-ChildItem `
             -Path $root `
             -Recurse `
             -File `
             -Filter *.sln |
             Select-Object -First 1
-
           if (-not $solution) {
             throw "No solution file was found."
           }
-
           "projectPath=$($project.FullName)" |
             Out-File $env:GITHUB_OUTPUT -Append
-
           "projectDir=$($project.DirectoryName)" |
             Out-File $env:GITHUB_OUTPUT -Append
-
           "solutionPath=$($solution.FullName)" |
             Out-File $env:GITHUB_OUTPUT -Append
-
           Write-Host "Project: $($project.FullName)"
           Write-Host "Solution: $($solution.FullName)"
-
       - name: Clean previous build files
         shell: pwsh
         run: |
           $root = $env:GITHUB_WORKSPACE
-
           foreach ($folderName in @("bin", "obj")) {
             Get-ChildItem `
               -Path $root `
@@ -84,9 +67,7 @@ jobs:
               -Force `
               -Filter $folderName `
               -ErrorAction SilentlyContinue |
-              Sort-Object {
-                $_.FullName.Length
-              } -Descending |
+              Sort-Object { $_.FullName.Length } -Descending |
               ForEach-Object {
                 Write-Host "Removing $($_.FullName)"
                 Remove-Item `
@@ -96,65 +77,94 @@ jobs:
                   -ErrorAction SilentlyContinue
               }
           }
-
           New-Item `
             -ItemType Directory `
             -Force `
             -Path "$root\artifacts" |
             Out-Null
-
       - name: Restore NuGet packages
         shell: pwsh
         run: |
           $project = "${{ steps.locate.outputs.projectPath }}"
-
-          msbuild $project `
+          & msbuild $project `
             /t:Restore `
             /p:Configuration=Release `
             /p:Platform=x64 `
             /v:minimal
-
           if ($LASTEXITCODE -ne 0) {
             throw "NuGet restore failed with exit code $LASTEXITCODE"
           }
-
       - name: Remove legacy NuGet lock files
         shell: pwsh
         run: |
           $root = $env:GITHUB_WORKSPACE
-
-          # Keep obj/project.assets.json.
-          # Remove only legacy project.lock.json files.
           $locks = Get-ChildItem `
             -Path $root `
             -Recurse `
             -File `
             -Filter project.lock.json `
             -ErrorAction SilentlyContinue
-
           foreach ($file in $locks) {
             Write-Host "Removing legacy lock file: $($file.FullName)"
-
-            Remove-Item `
-              -LiteralPath $file.FullName `
-              -Force
+            Remove-Item -LiteralPath $file.FullName -Force
           }
-
           Write-Host "Legacy lock-file cleanup complete."
-
+      - name: Diagnose UWP NuGet restore
+        if: always()
+        shell: pwsh
+        run: |
+          $root = $env:GITHUB_WORKSPACE
+          Write-Host "=== NuGet lock files ==="
+          Get-ChildItem $root -Recurse -File -ErrorAction SilentlyContinue |
+            Where-Object {
+              $_.Name -in @(
+                "project.lock.json",
+                "project.assets.json",
+                "packages.lock.json"
+              )
+            } |
+            ForEach-Object {
+              Write-Host $_.FullName
+            }
+          Write-Host "=== Restored framework targets ==="
+          Get-ChildItem $root -Recurse -File `
+            -Filter project.assets.json `
+            -ErrorAction SilentlyContinue |
+            ForEach-Object {
+              Write-Host "`nAssets file: $($_.FullName)"
+              try {
+                $assets = Get-Content $_.FullName -Raw |
+                  ConvertFrom-Json
+                Write-Host "Targets:"
+                $assets.targets.PSObject.Properties.Name
+                Write-Host "Frameworks:"
+                $assets.project.frameworks |
+                  ConvertTo-Json -Depth 8
+                Write-Host "Relevant packages:"
+                $assets.libraries.PSObject.Properties.Name |
+                  Where-Object {
+                    $_ -match "Microsoft.NETCore.UniversalWindowsPlatform|Microsoft.NETCore.Platforms"
+                  }
+              }
+              catch {
+                Write-Host "Could not read assets: $_"
+              }
+            }
       - name: Build and create APPX package
         shell: pwsh
         run: |
           $solution = "${{ steps.locate.outputs.solutionPath }}"
           $out = "$env:GITHUB_WORKSPACE\artifacts"
           $log = "$env:RUNNER_TEMP\appx-build.log"
-
-          New-Item -ItemType Directory -Force -Path $out | Out-Null
-
-          Write-Host "Building UWP solution and generating APPX..."
+          $packageDir = "$out\"
+          New-Item `
+            -ItemType Directory `
+            -Force `
+            -Path $out |
+            Out-Null
+          Write-Host "Building APPX package..."
           Write-Host "Solution: $solution"
           Write-Host "Output: $out"
-
           & msbuild $solution `
             /t:Build `
             /m `
@@ -163,39 +173,45 @@ jobs:
             /p:AppxBundle=Never `
             /p:UapAppxPackageBuildMode=SideloadOnly `
             /p:AppxPackageSigningEnabled=false `
-            "/p:AppxPackageDir=$out\\" `
+            "/p:AppxPackageDir=$packageDir" `
             /v:diag *> $log
-
           $buildExitCode = $LASTEXITCODE
-
-          Get-Content $log -Tail 80
-
+          Get-Content $log -Tail 100
           if ($buildExitCode -ne 0) {
-            Write-Host "Build errors:"
+            Write-Host "Relevant build errors:"
             Select-String `
               -Path $log `
-              -Pattern "error |NetCoreFramework|requires the .NET Framework" `
+              -Pattern "error |NetCoreFramework|requires the .NET Framework|WMC9999" `
               -Context 3, 6
-
-            throw "Build/package failed with exit code $buildExitCode"
+            throw "APPX build failed with exit code $buildExitCode"
           }
-
           $packages = Get-ChildItem `
             -Path $out `
             -Recurse `
             -File |
-            Where-Object { $_.Extension -in @(".appx", ".msix") }
-
+            Where-Object {
+              $_.Extension -in @(".appx", ".msix")
+            }
           if (-not $packages) {
-            Get-ChildItem $out -Recurse
-            throw "Build completed, but no APPX/MSIX package was generated."
+            Write-Host "No package found in artifacts."
+            Write-Host "Checking project output directories..."
+            Get-ChildItem `
+              -Path "${{ steps.locate.outputs.projectDir }}" `
+              -Recurse `
+              -File `
+              -ErrorAction SilentlyContinue |
+              Where-Object {
+                $_.Extension -in @(".appx", ".msix")
+              } |
+              ForEach-Object {
+                Write-Host $_.FullName
+              }
+            throw "Build completed, but no APPX/MSIX was found in artifacts."
           }
-
-          Write-Host "Generated packages:"
+          Write-Host "Generated package files:"
           $packages | ForEach-Object {
             Write-Host $_.FullName
           }
-
       - name: Upload APPX package
         if: success()
         uses: actions/upload-artifact@v4
@@ -204,7 +220,6 @@ jobs:
           path: artifacts/**
           if-no-files-found: error
           retention-days: 30
-
       - name: Upload build log for troubleshooting
         if: always()
         uses: actions/upload-artifact@v4
