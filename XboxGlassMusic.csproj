@@ -105,12 +105,9 @@
 
   <Import Project="$(MSBuildExtensionsPath)\Microsoft\WindowsXaml\v$(VisualStudioVersion)\Microsoft.Windows.UI.Xaml.CSharp.targets" />
 
-  <!-- Workaround: disable the failing framework-injection targets. -->
-  <Target Name="DisableNetCoreFrameworkInjection"
-          BeforeTargets="InjectNetCoreFrameworkBlockIfLockFileExists;InjectNetCoreFramework">
-    <PropertyGroup>
-      <_NetCoreFrameworkInjectionNeeded>false</_NetCoreFrameworkInjectionNeeded>
-    </PropertyGroup>
-  </Target>
+  <!-- Work around the legacy NuGet framework-injection check. -->
+  <Target Name="InjectNetCoreFrameworkBlockIfLockFileExists" />
+
+  <Target Name="InjectNetCoreFramework" />
 
 </Project>
