@@ -1,0 +1,106 @@
+
+name: Build XboxGlassMusic package
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+    paths:
+      - '**.cs'
+      - '**.xaml'
+      - '**.csproj'
+      - '**.sln'
+      - '**.appxmanifest'
+      - '.github/workflows/build-appx.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: windows-2022
+
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v4
+
+      - name: Setup MSBuild
+        uses: microsoft/setup-msbuild@v2
+
+      - name: Locate project
+        id: project
+        shell: pwsh
+        run: |
+          $project = Get-ChildItem -Recurse -Filter *.sln |
+            Select-Object -First 1
+          if (-not $project) {
+            throw "No solution file (.sln) found."
+          }
+          "solution=$($project.FullName)" |
+            Out-File -FilePath $env:GITHUB_OUTPUT -Append
+
+      - name: Create temporary signing certificate
+        shell: pwsh
+        run: |
+          $cert = New-SelfSignedCertificate `
+            -Type Custom `
+            -Subject "CN=XboxGlassMusic" `
+            -KeyUsage DigitalSignature `
+            -FriendlyName "XboxGlassMusic temporary package certificate" `
+            -CertStoreLocation "Cert:\CurrentUser\My" `
+            -KeyAlgorithm RSA `
+            -KeyLength 2048 `
+            -HashAlgorithm SHA256 `
+            -NotAfter (Get-Date).AddYears(2)
+
+          $password = ConvertTo-SecureString `
+            -String "TemporaryBuildPassword123!" `
+            -Force -AsPlainText
+
+          Export-PfxCertificate `
+            -Cert $cert `
+            -FilePath "$env:RUNNER_TEMP\signing.pfx" `
+            -Password $password | Out-Null
+
+          Export-Certificate `
+            -Cert $cert `
+            -FilePath "$env:RUNNER_TEMP\signing.cer" | Out-Null
+
+          "CERT_THUMBPRINT=$($cert.Thumbprint)" |
+            Out-File -FilePath $env:GITHUB_ENV -Append
+
+      - name: Build and package x64
+        shell: pwsh
+        run: |
+          $out = "$env:GITHUB_WORKSPACE\artifacts"
+          New-Item -ItemType Directory -Force -Path $out | Out-Null
+
+          msbuild "${{ steps.project.outputs.solution }}" `
+            /restore `
+            /m `
+            /p:Configuration=Release `
+            /p:Platform=x64 `
+            /p:AppxBundle=Never `
+            /p:UapAppxPackageBuildMode=SideloadOnly `
+            /p:AppxPackageSigningEnabled=true `
+            /p:PackageCertificateKeyFile="$env:RUNNER_TEMP\signing.pfx" `
+            /p:PackageCertificatePassword="TemporaryBuildPassword123!" `
+            /p:AppxPackageDir="$out\\"
+
+          if ($LASTEXITCODE -ne 0) {
+            throw "MSBuild failed with exit code $LASTEXITCODE"
+          }
+
+          Copy-Item "$env:RUNNER_TEMP\signing.cer" `
+            "$out\XboxGlassMusic-signing.cer"
+
+          Get-ChildItem $out -Recurse
+
+      - name: Upload app package artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: XboxGlassMusic-x64-appx
+          path: artifacts/**
+          if-no-files-found: error
+          retention-days: 30
