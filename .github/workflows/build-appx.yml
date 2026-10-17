@@ -31,7 +31,10 @@ jobs:
         id: project
         shell: pwsh
         run: |
-          $solution = Get-ChildItem -Path $env:GITHUB_WORKSPACE -Recurse -Filter *.sln |
+          $solution = Get-ChildItem `
+            -Path $env:GITHUB_WORKSPACE `
+            -Recurse `
+            -Filter *.sln |
             Select-Object -First 1
 
           if (-not $solution) {
@@ -40,6 +43,31 @@ jobs:
 
           "solution=$($solution.FullName)" |
             Out-File -FilePath $env:GITHUB_OUTPUT -Append
+
+      - name: Clean old build files
+        shell: pwsh
+        run: |
+          $workspace = $env:GITHUB_WORKSPACE
+
+          Get-ChildItem `
+            -Path $workspace `
+            -Directory `
+            -Recurse `
+            -Force `
+            -ErrorAction SilentlyContinue |
+            Where-Object {
+              $_.Name -eq "bin" -or $_.Name -eq "obj"
+            } |
+            Sort-Object {
+              $_.FullName.Length
+            } -Descending |
+            ForEach-Object {
+              Remove-Item `
+                -LiteralPath $_.FullName `
+                -Recurse `
+                -Force `
+                -ErrorAction SilentlyContinue
+            }
 
       - name: Create temporary signing certificate
         shell: pwsh
@@ -57,16 +85,19 @@ jobs:
 
           $password = ConvertTo-SecureString `
             -String "TemporaryBuildPassword123!" `
-            -Force -AsPlainText
+            -Force `
+            -AsPlainText
 
           Export-PfxCertificate `
             -Cert $cert `
             -FilePath "$env:RUNNER_TEMP\signing.pfx" `
-            -Password $password | Out-Null
+            -Password $password |
+            Out-Null
 
           Export-Certificate `
             -Cert $cert `
-            -FilePath "$env:RUNNER_TEMP\signing.cer" | Out-Null
+            -FilePath "$env:RUNNER_TEMP\signing.cer" |
+            Out-Null
 
       - name: Restore NuGet packages
         shell: pwsh
@@ -85,9 +116,13 @@ jobs:
         shell: pwsh
         run: |
           $out = "$env:GITHUB_WORKSPACE\artifacts"
-          New-Item -ItemType Directory -Force -Path $out | Out-Null
-
           $log = "$env:RUNNER_TEMP\msbuild.log"
+
+          New-Item `
+            -ItemType Directory `
+            -Force `
+            -Path $out |
+            Out-Null
 
           msbuild "${{ steps.project.outputs.solution }}" `
             /t:Build `
@@ -108,15 +143,20 @@ jobs:
 
           if ($buildExitCode -ne 0) {
             Write-Host "Searching diagnostic log for framework dependency errors..."
-            Select-String -Path $log `
+
+            Select-String `
+              -Path $log `
               -Pattern "NetCoreFramework|requires the .NET Framework|error NU" `
-              -Context 5,10
+              -Context 5, 10
+
             throw "MSBuild failed with exit code $buildExitCode"
           }
 
-          Copy-Item "$env:RUNNER_TEMP\signing.cer" `
+          Copy-Item `
+            "$env:RUNNER_TEMP\signing.cer" `
             "$out\XboxGlassMusic-signing.cer"
 
+          Write-Host "Build output:"
           Get-ChildItem $out -Recurse
 
       - name: Upload app package
