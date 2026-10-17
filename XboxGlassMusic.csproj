@@ -46,6 +46,11 @@
   </ItemGroup>
   <ItemGroup>
     <Content Include="Assets\StoreLogo.png" />
+  
+  <ItemGroup>
+    <PackageReference Include="Microsoft.NETCore.UniversalWindowsPlatform" Version="6.2.14" />
   </ItemGroup>
+
   <Import Project="$(MSBuildExtensionsPath)\Microsoft\WindowsXaml\v$(VisualStudioVersion)\Microsoft.Windows.UI.Xaml.CSharp.targets" />
+
 </Project>
