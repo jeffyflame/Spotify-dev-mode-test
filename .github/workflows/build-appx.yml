@@ -48,25 +48,29 @@ jobs:
       - name: Clean old build files
         shell: pwsh
         run: |
-          $workspace = $env:GITHUB_WORKSPACE
+          Get-ChildItem `
+            -Path $env:GITHUB_WORKSPACE `
+            -Directory `
+            -Recurse `
+            -Force `
+            -Filter bin `
+            -ErrorAction SilentlyContinue |
+            Sort-Object { $_.FullName.Length } -Descending |
+            ForEach-Object {
+              Remove-Item -LiteralPath $_.FullName -Recurse -Force -ErrorAction SilentlyContinue
+            }
 
-          foreach ($folderName in @("bin", "obj")) {
-            Get-ChildItem `
-              -Path $workspace `
-              -Directory `
-              -Recurse `
-              -Force `
-              -Filter $folderName `
-              -ErrorAction SilentlyContinue |
-              Sort-Object { $_.FullName.Length } -Descending |
-              ForEach-Object {
-                Remove-Item `
-                  -LiteralPath $_.FullName `
-                  -Recurse `
-                  -Force `
-                  -ErrorAction SilentlyContinue
-              }
-          }
+          Get-ChildItem `
+            -Path $env:GITHUB_WORKSPACE `
+            -Directory `
+            -Recurse `
+            -Force `
+            -Filter obj `
+            -ErrorAction SilentlyContinue |
+            Sort-Object { $_.FullName.Length } -Descending |
+            ForEach-Object {
+              Remove-Item -LiteralPath $_.FullName -Recurse -Force -ErrorAction SilentlyContinue
+            }
 
       - name: Create temporary signing certificate
         shell: pwsh
@@ -111,16 +115,56 @@ jobs:
             throw "NuGet restore failed with exit code $LASTEXITCODE"
           }
 
+      - name: Diagnose NuGet assets
+        if: always()
+        shell: pwsh
+        run: |
+          $files = Get-ChildItem `
+            -Path $env:GITHUB_WORKSPACE `
+            -Recurse `
+            -File `
+            -Force `
+            -ErrorAction SilentlyContinue |
+            Where-Object {
+              $_.Name -in @(
+                "project.assets.json",
+                "project.nuget.cache",
+                "packages.lock.json",
+                "project.lock.json"
+              )
+            }
+
+          foreach ($file in $files) {
+            Write-Host "`n=== $($file.FullName) ==="
+
+            if ($file.Name -eq "project.assets.json") {
+              try {
+                $assets = Get-Content $file.FullName -Raw |
+                  ConvertFrom-Json
+
+                Write-Host "TARGETS:"
+                $assets.targets.PSObject.Properties.Name
+
+                Write-Host "LIBRARIES:"
+                $assets.libraries.PSObject.Properties.Name
+
+                Write-Host "FRAMEWORKS:"
+                $assets.project.frameworks |
+                  ConvertTo-Json -Depth 8
+              }
+              catch {
+                Write-Host "Could not parse assets: $_"
+              }
+            }
+          }
+
       - name: Build and package x64
         shell: pwsh
         run: |
           $out = "$env:GITHUB_WORKSPACE\artifacts"
           $log = "$env:RUNNER_TEMP\msbuild.log"
 
-          New-Item `
-            -ItemType Directory `
-            -Force `
-            -Path $out |
+          New-Item -ItemType Directory -Force -Path $out |
             Out-Null
 
           msbuild "${{ steps.project.outputs.solution }}" `
@@ -141,7 +185,7 @@ jobs:
           Get-Content $log -Tail 100
 
           if ($buildExitCode -ne 0) {
-            Write-Host "Relevant framework and NuGet errors:"
+            Write-Host "Relevant build errors:"
 
             Select-String `
               -Path $log `
@@ -155,10 +199,23 @@ jobs:
             "$env:RUNNER_TEMP\signing.cer" `
             "$out\XboxGlassMusic-signing.cer"
 
-          Write-Host "Build output:"
           Get-ChildItem $out -Recurse
 
+      - name: Upload NuGet diagnostic files
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: nuget-diagnostics
+          path: |
+            **/obj/project.assets.json
+            **/obj/project.nuget.cache
+            **/project.lock.json
+            **/packages.lock.json
+          if-no-files-found: warn
+          retention-days: 7
+
       - name: Upload app package
+        if: success()
         uses: actions/upload-artifact@v4
         with:
           name: XboxGlassMusic-x64-appx
