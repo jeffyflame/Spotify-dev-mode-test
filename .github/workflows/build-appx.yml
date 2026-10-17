@@ -49,25 +49,23 @@ jobs:
         run: |
           $workspace = $env:GITHUB_WORKSPACE
 
-          Get-ChildItem `
-            -Path $workspace `
-            -Directory `
-            -Recurse `
-            -Force `
-            -ErrorAction SilentlyContinue |
-            Where-Object {
-              $_.Name -eq "bin" -or $_.Name -eq "obj"
-            } |
-            Sort-Object {
-              $_.FullName.Length
-            } -Descending |
-            ForEach-Object {
-              Remove-Item `
-                -LiteralPath $_.FullName `
-                -Recurse `
-                -Force `
-                -ErrorAction SilentlyContinue
-            }
+          foreach ($folderName in @("bin", "obj")) {
+            Get-ChildItem `
+              -Path $workspace `
+              -Directory `
+              -Recurse `
+              -Force `
+              -Filter $folderName `
+              -ErrorAction SilentlyContinue |
+              Sort-Object { $_.FullName.Length } -Descending |
+              ForEach-Object {
+                Remove-Item `
+                  -LiteralPath $_.FullName `
+                  -Recurse `
+                  -Force `
+                  -ErrorAction SilentlyContinue
+              }
+          }
 
       - name: Create temporary signing certificate
         shell: pwsh
@@ -129,6 +127,7 @@ jobs:
             /m `
             /p:Configuration=Release `
             /p:Platform=x64 `
+            /p:ResolveNuGetPackages=false `
             /p:AppxBundle=Never `
             /p:UapAppxPackageBuildMode=SideloadOnly `
             /p:AppxPackageSigningEnabled=true `
@@ -142,7 +141,7 @@ jobs:
           Get-Content $log -Tail 100
 
           if ($buildExitCode -ne 0) {
-            Write-Host "Searching diagnostic log for framework dependency errors..."
+            Write-Host "Relevant framework and NuGet errors:"
 
             Select-String `
               -Path $log `
