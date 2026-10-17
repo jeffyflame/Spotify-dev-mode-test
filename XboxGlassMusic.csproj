@@ -28,6 +28,10 @@
     <AppxManifest>Package.appxmanifest</AppxManifest>
 
     <RuntimeIdentifiers>win10;win10-x64</RuntimeIdentifiers>
+
+    <!-- Explicit architecture for the UWP CoreRuntime task. -->
+    <TargetArch Condition="'$(Platform)' == 'x64'">x64</TargetArch>
+    <TargetArch Condition="'$(Platform)' == 'ARM64'">ARM64</TargetArch>
   </PropertyGroup>
 
   <PropertyGroup Condition="'$(Configuration)|$(Platform)' == 'Debug|x64'">
