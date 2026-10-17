@@ -1,3 +1,4 @@
+
 <?xml version="1.0" encoding="utf-8"?>
 <Package xmlns="http://schemas.microsoft.com/appx/manifest/foundation/windows10"
          xmlns:uap="http://schemas.microsoft.com/appx/manifest/uap/windows10"
@@ -5,26 +6,55 @@
          xmlns:mp="http://schemas.microsoft.com/appx/2014/phone/manifest"
          xmlns:rescap="http://schemas.microsoft.com/appx/manifest/foundation/windows10/restrictedcapabilities"
          IgnorableNamespaces="uap uap3 mp rescap">
-  <Identity Name="XboxGlassMusic" Publisher="CN=XboxGlassMusic" Version="1.0.0.0" />
+
+  <Identity Name="XboxGlassMusic"
+            Publisher="CN=XboxGlassMusic"
+            Version="1.0.0.0" />
+
+  <mp:PhoneIdentity
+      PhoneProductId="{6A3D2C91-7F54-4A18-9B63-2D8E51C740AF}"
+      PhonePublisherId="00000000-0000-0000-0000-000000000000" />
+
   <Properties>
     <DisplayName>Glassify</DisplayName>
     <PublisherDisplayName>Glassify</PublisherDisplayName>
     <Logo>Assets\StoreLogo.png</Logo>
   </Properties>
+
   <Dependencies>
-    <TargetDeviceFamily Name="Windows.Universal" MinVersion="10.0.17763.0" MaxVersionTested="10.0.19041.0" />
+    <TargetDeviceFamily
+        Name="Windows.Universal"
+        MinVersion="10.0.17763.0"
+        MaxVersionTested="10.0.19041.0" />
   </Dependencies>
+
   <Resources>
     <Resource Language="en-us" />
   </Resources>
+
   <Applications>
-    <Application Id="App" Executable="$targetnametoken$.exe" EntryPoint="XboxGlassMusic.App">
-      <uap:VisualElements DisplayName="Glassify" Description="Liquid Glass music player" BackgroundColor="#10131B" Square150x150Logo="Assets\StoreLogo.png" Square44x44Logo="Assets\StoreLogo.png">
+    <Application
+        Id="App"
+        Executable="$targetnametoken$.exe"
+        EntryPoint="XboxGlassMusic.App">
+
+      <uap:VisualElements
+          DisplayName="Glassify"
+          Description="Liquid Glass music player"
+          BackgroundColor="#10131B"
+          Square150x150Logo="Assets\StoreLogo.png"
+          Square44x44Logo="Assets\StoreLogo.png">
+
         <uap:DefaultTile Wide310x150Logo="Assets\StoreLogo.png" />
-        <uap:SplashScreen Image="Assets\StoreLogo.png" BackgroundColor="#10131B" />
+
+        <uap:SplashScreen
+            Image="Assets\StoreLogo.png"
+            BackgroundColor="#10131B" />
+
       </uap:VisualElements>
     </Application>
   </Applications>
+
   <Capabilities>
     <Capability Name="internetClient" />
     <uap:Capability Name="musicLibrary" />
