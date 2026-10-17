@@ -1,121 +1,91 @@
 name: Build XboxGlassMusic APPX
+
 on:
-  workflow_dispatch:
   push:
-    branches:
-      - main
-    paths:
-      - '**.cs'
-      - '**.xaml'
-      - '**.csproj'
-      - '**.sln'
-      - '**.appxmanifest'
-      - '**.props'
-      - '**.targets'
-      - 'packages.config'
-      - '.github/workflows/build-appx.yml'
-permissions:
-  contents: read
+  pull_request:
+  workflow_dispatch:
+
 jobs:
   build:
     runs-on: windows-2022
+
     steps:
-      - name: Checkout source
+      - name: Checkout repository
         uses: actions/checkout@v4
+
       - name: Setup MSBuild
         uses: microsoft/setup-msbuild@v2
-      - name: Locate project
+
+      - name: Locate UWP project
         id: locate
         shell: pwsh
         run: |
-          $root = $env:GITHUB_WORKSPACE
-          $project = Get-ChildItem `
-            -Path $root `
-            -Recurse `
-            -File `
-            -Filter XboxGlassMusic.csproj |
+          $project = Get-ChildItem $env:GITHUB_WORKSPACE -Recurse -Filter "XboxGlassMusic.csproj" |
             Select-Object -First 1
+
           if (-not $project) {
             throw "XboxGlassMusic.csproj was not found."
           }
-          $solution = Get-ChildItem `
-            -Path $root `
-            -Recurse `
-            -File `
-            -Filter *.sln |
+
+          $solution = Get-ChildItem $env:GITHUB_WORKSPACE -Recurse -Filter "XboxGlassMusic.sln" |
             Select-Object -First 1
+
           if (-not $solution) {
-            throw "No solution file was found."
+            throw "XboxGlassMusic.sln was not found."
           }
-          "projectPath=$($project.FullName)" |
-            Out-File $env:GITHUB_OUTPUT -Append
-          "projectDir=$($project.DirectoryName)" |
-            Out-File $env:GITHUB_OUTPUT -Append
-          "solutionPath=$($solution.FullName)" |
-            Out-File $env:GITHUB_OUTPUT -Append
+
+          "projectPath=$($project.FullName)" >> $env:GITHUB_OUTPUT
+          "projectDir=$($project.DirectoryName)" >> $env:GITHUB_OUTPUT
+          "solutionPath=$($solution.FullName)" >> $env:GITHUB_OUTPUT
+
           Write-Host "Project: $($project.FullName)"
           Write-Host "Solution: $($solution.FullName)"
+
       - name: Clean previous build files
         shell: pwsh
         run: |
-          $root = $env:GITHUB_WORKSPACE
-          foreach ($folderName in @("bin", "obj")) {
-            Get-ChildItem `
-              -Path $root `
-              -Recurse `
-              -Directory `
-              -Force `
-              -Filter $folderName `
-              -ErrorAction SilentlyContinue |
-              Sort-Object { $_.FullName.Length } -Descending |
-              ForEach-Object {
-                Write-Host "Removing $($_.FullName)"
-                Remove-Item `
-                  -LiteralPath $_.FullName `
-                  -Recurse `
-                  -Force `
-                  -ErrorAction SilentlyContinue
-              }
+          $projectDir = "${{ steps.locate.outputs.projectDir }}"
+
+          foreach ($folder in @("bin", "obj")) {
+            $path = Join-Path $projectDir $folder
+
+            if (Test-Path $path) {
+              Remove-Item $path -Recurse -Force
+              Write-Host "Removed $path"
+            }
           }
-          New-Item `
-            -ItemType Directory `
-            -Force `
-            -Path "$root\artifacts" |
-            Out-Null
+
       - name: Restore NuGet packages
         shell: pwsh
         run: |
           $project = "${{ steps.locate.outputs.projectPath }}"
-          & msbuild $project `
-            /t:Restore `
-            /p:Configuration=Release `
-            /p:Platform=x64 `
-            /v:minimal
+
+          & msbuild $project /t:Restore /v:minimal
+
           if ($LASTEXITCODE -ne 0) {
             throw "NuGet restore failed with exit code $LASTEXITCODE"
           }
+
       - name: Remove legacy NuGet lock files
         shell: pwsh
         run: |
-          $root = $env:GITHUB_WORKSPACE
-          $locks = Get-ChildItem `
-            -Path $root `
-            -Recurse `
-            -File `
-            -Filter project.lock.json `
-            -ErrorAction SilentlyContinue
-          foreach ($file in $locks) {
-            Write-Host "Removing legacy lock file: $($file.FullName)"
-            Remove-Item -LiteralPath $file.FullName -Force
-          }
-          Write-Host "Legacy lock-file cleanup complete."
+          $projectDir = "${{ steps.locate.outputs.projectDir }}"
+
+          Get-ChildItem $projectDir -Recurse -File -Filter "project.lock.json" |
+            ForEach-Object {
+              Write-Host "Removing legacy lock file: $($_.FullName)"
+              Remove-Item $_.FullName -Force
+            }
+
       - name: Diagnose UWP NuGet restore
         if: always()
         shell: pwsh
         run: |
-          $root = $env:GITHUB_WORKSPACE
-          Write-Host "=== NuGet lock files ==="
-          Get-ChildItem $root -Recurse -File -ErrorAction SilentlyContinue |
+          $projectDir = "${{ steps.locate.outputs.projectDir }}"
+
+          Write-Host "=== NuGet asset and lock files ==="
+
+          Get-ChildItem $projectDir -Recurse -File -ErrorAction SilentlyContinue |
             Where-Object {
               $_.Name -in @(
                 "project.lock.json",
@@ -124,46 +94,62 @@ jobs:
               )
             } |
             ForEach-Object {
-              Write-Host $_.FullName
-            }
-          Write-Host "=== Restored framework targets ==="
-          Get-ChildItem $root -Recurse -File `
-            -Filter project.assets.json `
-            -ErrorAction SilentlyContinue |
-            ForEach-Object {
-              Write-Host "`nAssets file: $($_.FullName)"
-              try {
-                $assets = Get-Content $_.FullName -Raw |
-                  ConvertFrom-Json
-                Write-Host "Targets:"
-                $assets.targets.PSObject.Properties.Name
-                Write-Host "Frameworks:"
-                $assets.project.frameworks |
-                  ConvertTo-Json -Depth 8
-                Write-Host "Relevant packages:"
-                $assets.libraries.PSObject.Properties.Name |
-                  Where-Object {
-                    $_ -match "Microsoft.NETCore.UniversalWindowsPlatform|Microsoft.NETCore.Platforms"
+              Write-Host "`n=== $($_.FullName) ==="
+
+              if ($_.Name -eq "project.assets.json") {
+                try {
+                  $data = Get-Content $_.FullName -Raw | ConvertFrom-Json
+
+                  Write-Host "Targets:"
+                  $data.targets.PSObject.Properties.Name
+
+                  Write-Host "Frameworks:"
+                  $data.project.frameworks.PSObject.Properties.Name
+
+                  Write-Host "Relevant packages:"
+                  $data.targets.PSObject.Properties | ForEach-Object {
+                    $targetName = $_.Name
+
+                    $_.Value.PSObject.Properties |
+                      Where-Object {
+                        $_.Name -match "Microsoft.NETCore|NETFramework|FrameworkReference"
+                      } |
+                      ForEach-Object {
+                        Write-Host "$targetName : $($_.Name)"
+                      }
                   }
+                }
+                catch {
+                  Write-Host "Could not parse assets file: $_"
+                }
               }
-              catch {
-                Write-Host "Could not read assets: $_"
+              else {
+                Write-Host "File exists: $($_.FullName)"
               }
             }
+
       - name: Diagnose framework injection
+        if: always()
         shell: pwsh
         run: |
           $project = "${{ steps.locate.outputs.projectPath }}"
+          $projectDir = "${{ steps.locate.outputs.projectDir }}"
+
           Write-Host "=== Relevant MSBuild properties ==="
+
           & msbuild $project `
             "-getProperty:ProjectLockFile,MSBuildProjectExtensionsPath,ResolveNuGetPackages,AppxPackage,_NetCoreFrameworkInjectionNeeded" `
             /p:Configuration=Release `
             /p:Platform=x64
+
           if ($LASTEXITCODE -ne 0) {
             Write-Host "Property query failed; continuing with file inspection."
           }
-          Write-Host "=== Files in project obj directory ==="
-          $obj = Join-Path "${{ steps.locate.outputs.projectDir }}" "obj"
+
+          Write-Host "`n=== Files in project obj directory ==="
+
+          $obj = Join-Path $projectDir "obj"
+
           if (Test-Path $obj) {
             Get-ChildItem $obj -Recurse -File |
               Where-Object {
@@ -176,9 +162,59 @@ jobs:
               ForEach-Object {
                 Write-Host $_.FullName
               }
-          } else {
+          }
+          else {
             Write-Host "No obj directory found."
           }
+
+          Write-Host "`n=== Inspect restored dependency graph ==="
+
+          $assets = Join-Path $projectDir "obj\project.assets.json"
+
+          if (Test-Path $assets) {
+            try {
+              $data = Get-Content $assets -Raw | ConvertFrom-Json
+
+              Write-Host "`n=== Restored target frameworks ==="
+              $data.targets.PSObject.Properties.Name
+
+              Write-Host "`n=== Declared frameworks ==="
+              $data.project.frameworks.PSObject.Properties.Name
+
+              Write-Host "`n=== .NET Framework-related package entries ==="
+
+              $data.targets.PSObject.Properties | ForEach-Object {
+                $targetName = $_.Name
+
+                $_.Value.PSObject.Properties |
+                  Where-Object {
+                    $_.Name -match "framework|netfx|referenceassemblies"
+                  } |
+                  ForEach-Object {
+                    Write-Host "$targetName : $($_.Name)"
+                  }
+              }
+
+              Write-Host "`n=== Direct project dependencies ==="
+
+              $data.project.frameworks.PSObject.Properties | ForEach-Object {
+                $frameworkName = $_.Name
+                Write-Host "Framework: $frameworkName"
+
+                $_.Value.dependencies.PSObject.Properties |
+                  ForEach-Object {
+                    Write-Host "  $($_.Name) $($_.Value.version)"
+                  }
+              }
+            }
+            catch {
+              Write-Host "Failed to inspect assets file: $_"
+            }
+          }
+          else {
+            Write-Host "project.assets.json was not found."
+          }
+
       - name: Build and create APPX package
         shell: pwsh
         run: |
@@ -186,14 +222,9 @@ jobs:
           $out = "$env:GITHUB_WORKSPACE\artifacts"
           $log = "$env:RUNNER_TEMP\appx-build.log"
           $packageDir = "$out\"
-          New-Item `
-            -ItemType Directory `
-            -Force `
-            -Path $out |
-            Out-Null
-          Write-Host "Building APPX package..."
-          Write-Host "Solution: $solution"
-          Write-Host "Output: $out"
+
+          New-Item -ItemType Directory -Force -Path $out | Out-Null
+
           & msbuild $solution `
             /t:Build `
             /m `
@@ -204,51 +235,63 @@ jobs:
             /p:AppxPackageSigningEnabled=false `
             "/p:AppxPackageDir=$packageDir" `
             /v:diag *> $log
+
           $buildExitCode = $LASTEXITCODE
+
+          Write-Host "=== Last 100 build log lines ==="
           Get-Content $log -Tail 100
+
           if ($buildExitCode -ne 0) {
-            Write-Host "Relevant build errors:"
-            Select-String `
-              -Path $log `
+            Write-Host "`n=== Relevant build errors ==="
+
+            Select-String -Path $log `
               -Pattern "error |NetCoreFramework|requires the .NET Framework|WMC9999" `
               -Context 3, 6
+
             throw "APPX build failed with exit code $buildExitCode"
           }
-          $packages = Get-ChildItem `
-            -Path $out `
-            -Recurse `
-            -File |
+
+          Write-Host "`n=== Generated APPX/MSIX files ==="
+
+          $packages = Get-ChildItem $out -Recurse -File |
             Where-Object {
               $_.Extension -in @(".appx", ".msix")
             }
+
           if (-not $packages) {
-            Write-Host "No package found in artifacts."
-            Get-ChildItem `
-              -Path "${{ steps.locate.outputs.projectDir }}" `
-              -Recurse `
-              -File `
-              -ErrorAction SilentlyContinue |
+            Write-Host "No package found in artifacts directory. Searching project output..."
+
+            $projectDir = "${{ steps.locate.outputs.projectDir }}"
+
+            $packages = Get-ChildItem $projectDir -Recurse -File |
               Where-Object {
                 $_.Extension -in @(".appx", ".msix")
-              } |
-              ForEach-Object {
-                Write-Host $_.FullName
               }
-            throw "Build completed, but no APPX/MSIX was found in artifacts."
           }
-          Write-Host "Generated package files:"
-          $packages | ForEach-Object {
-            Write-Host $_.FullName
+
+          if (-not $packages) {
+            throw "Build succeeded, but no .appx or .msix package was found."
           }
-      - name: Upload APPX package
+
+          foreach ($package in $packages) {
+            Write-Host "Package: $($package.FullName)"
+            Write-Host "Size: $($package.Length) bytes"
+          }
+
+      - name: Upload APPX artifacts
         if: success()
         uses: actions/upload-artifact@v4
         with:
-          name: XboxGlassMusic-x64-appx
-          path: artifacts/**
+          name: XboxGlassMusic-APPX
+          path: |
+            artifacts/**/*.appx
+            artifacts/**/*.msix
+            ${{ steps.locate.outputs.projectDir }}/**/*.appx
+            ${{ steps.locate.outputs.projectDir }}/**/*.msix
           if-no-files-found: error
-          retention-days: 30
-      - name: Upload build log for troubleshooting
+          retention-days: 14
+
+      - name: Upload diagnostic build log
         if: always()
         uses: actions/upload-artifact@v4
         with:
