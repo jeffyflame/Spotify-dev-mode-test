@@ -104,4 +104,21 @@
   </ItemGroup>
 
   <Import Project="$(MSBuildExtensionsPath)\Microsoft\WindowsXaml\v$(VisualStudioVersion)\Microsoft.Windows.UI.Xaml.CSharp.targets" />
+
+  <!-- Workaround: switch to the legacy framework-injection path. -->
+  <Target Name="UseLegacyFrameworkInjection"
+          BeforeTargets="ComputeNetCoreFrameworkInjectionParameters">
+    <PropertyGroup>
+      <ResolveNuGetPackages>false</ResolveNuGetPackages>
+    </PropertyGroup>
+  </Target>
+
+  <!-- Restore normal NuGet resolution after framework injection. -->
+  <Target Name="RestoreNuGetResolution"
+          AfterTargets="InjectNetCoreFramework">
+    <PropertyGroup>
+      <ResolveNuGetPackages>true</ResolveNuGetPackages>
+    </PropertyGroup>
+  </Target>
+
 </Project>
