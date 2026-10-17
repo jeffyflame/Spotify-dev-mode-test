@@ -239,6 +239,61 @@ jobs:
             Write-Host "project.assets.json was not found."
           }
 
+      # NEW DIAGNOSTIC STEP
+      - name: Inspect CoreRuntime task definition
+        if: always()
+        shell: pwsh
+        run: |
+          $roots = @(
+            "C:\Program Files (x86)\Microsoft SDKs\UWPNuGetPackages",
+            (Join-Path $env:USERPROFILE ".nuget\packages"),
+            (Join-Path $env:GITHUB_WORKSPACE "packages"),
+            (Join-Path $env:GITHUB_WORKSPACE "obj")
+          )
+
+          $files = @(
+            foreach ($root in $roots) {
+              if (Test-Path $root) {
+                Get-ChildItem $root `
+                  -Filter "Microsoft.Net.CoreRuntime.targets" `
+                  -Recurse -File -ErrorAction SilentlyContinue
+              }
+            }
+          ) | Sort-Object FullName -Unique
+
+          if (-not $files) {
+            Write-Host "Microsoft.Net.CoreRuntime.targets was not found in the searched locations."
+            exit 0
+          }
+
+          foreach ($file in $files) {
+            Write-Host "`n=== TARGETS FILE: $($file.FullName) ==="
+            $lines = Get-Content $file.FullName
+
+            Write-Host "`n=== Lines 220-255 (or available range) ==="
+            $start = [Math]::Max(0, 219)
+            $end = [Math]::Min($lines.Length - 1, 254)
+
+            for ($i = $start; $i -le $end; $i++) {
+              "{0}: {1}" -f ($i + 1), $lines[$i]
+            }
+
+            Write-Host "`n=== WireUpCoreRuntime / TargetArch matches with context ==="
+
+            for ($i = 0; $i -lt $lines.Length; $i++) {
+              if ($lines[$i] -match "WireUpCoreRuntime|TargetArch|ComputeWireUpCoreRuntimeParameters") {
+                $start = [Math]::Max(0, $i - 6)
+                $end = [Math]::Min($lines.Length - 1, $i + 8)
+
+                for ($j = $start; $j -le $end; $j++) {
+                  "{0}: {1}" -f ($j + 1), $lines[$j]
+                }
+
+                Write-Host "------------------------------"
+              }
+            }
+          }
+
       - name: Build and create APPX package
         shell: pwsh
         run: |
@@ -283,5 +338,3 @@ jobs:
           path: |
             **/build-diagnostic.log
           if-no-files-found: warn
-
-Ur code doesn’t work 
