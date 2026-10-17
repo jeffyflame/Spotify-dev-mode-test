@@ -57,13 +57,24 @@ jobs:
             -FilePath "$env:RUNNER_TEMP\signing.cer" | Out-Null
           "CERT_THUMBPRINT=$($cert.Thumbprint)" |
             Out-File -FilePath $env:GITHUB_ENV -Append
-      - name: Build and package x64
+           - name: Build and package x64
         shell: pwsh
         run: |
           $out = "$env:GITHUB_WORKSPACE\artifacts"
           New-Item -ItemType Directory -Force -Path $out | Out-Null
+
           msbuild "${{ steps.project.outputs.solution }}" `
-            /restore `
+            /t:Restore `
+            /p:Configuration=Release `
+            /p:Platform=x64 `
+            /v:minimal
+
+          if ($LASTEXITCODE -ne 0) {
+            throw "NuGet restore failed: $LASTEXITCODE"
+          }
+
+          msbuild "${{ steps.project.outputs.solution }}" `
+            /t:Build `
             /m `
             /p:Configuration=Release `
             /p:Platform=x64 `
@@ -73,14 +84,17 @@ jobs:
             /p:PackageCertificateKeyFile="$env:RUNNER_TEMP\signing.pfx" `
             /p:PackageCertificatePassword="TemporaryBuildPassword123!" `
             /p:AppxPackageDir="$out\\" `
-            /p:RestorePackagesConfig=true `
-            /p:SkipInvalidConfigurations=true `
-            /v:minimal
+            /v:diag *> "$env:RUNNER_TEMP\msbuild.log"
+
+          Get-Content "$env:RUNNER_TEMP\msbuild.log" -Tail 100
+
           if ($LASTEXITCODE -ne 0) {
-            throw "MSBuild failed with exit code $LASTEXITCODE"
+            throw "MSBuild failed: $LASTEXITCODE"
           }
+
           Copy-Item "$env:RUNNER_TEMP\signing.cer" `
             "$out\XboxGlassMusic-signing.cer"
+
           Get-ChildItem $out -Recurse
       - name: Upload app package artifact
         uses: actions/upload-artifact@v4
