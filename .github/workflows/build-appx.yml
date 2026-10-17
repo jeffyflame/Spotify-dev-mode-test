@@ -58,8 +58,6 @@ jobs:
           "CERT_THUMBPRINT=$($cert.Thumbprint)" |
             Out-File -FilePath $env:GITHUB_ENV -Append
            - name: Build and package x64
-        shell: pwsh
-        run: |
           $out = "$env:GITHUB_WORKSPACE\artifacts"
           New-Item -ItemType Directory -Force -Path $out | Out-Null
 
