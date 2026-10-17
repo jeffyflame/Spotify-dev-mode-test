@@ -1,3 +1,4 @@
+
 name: Build XboxGlassMusic package
 
 on:
@@ -127,7 +128,6 @@ jobs:
             /m `
             /p:Configuration=Release `
             /p:Platform=x64 `
-            /p:ResolveNuGetPackages=false `
             /p:AppxBundle=Never `
             /p:UapAppxPackageBuildMode=SideloadOnly `
             /p:AppxPackageSigningEnabled=true `
@@ -145,7 +145,7 @@ jobs:
 
             Select-String `
               -Path $log `
-              -Pattern "NetCoreFramework|requires the .NET Framework|error NU" `
+              -Pattern "NetCoreFramework|requires the .NET Framework|error NU|WMC9999" `
               -Context 5, 10
 
             throw "MSBuild failed with exit code $buildExitCode"
