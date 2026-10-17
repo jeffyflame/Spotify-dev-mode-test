@@ -1,5 +1,5 @@
 
-name: Build XboxGlassMusic APPX
+name: Build Glassify APPX
 
 on:
   workflow_dispatch:
@@ -69,7 +69,8 @@ jobs:
 
           msbuild $project /t:Restore /v:minimal `
             /p:Configuration=Release `
-            /p:Platform=x64
+            /p:Platform=x64 `
+            /p:PlatformTarget=x64
 
           if ($LASTEXITCODE -ne 0) {
             throw "NuGet restore failed."
@@ -140,9 +141,10 @@ jobs:
           Write-Host "=== Relevant MSBuild properties ==="
 
           & msbuild $project `
-            "-getProperty:ProjectLockFile,MSBuildProjectExtensionsPath,ResolveNuGetPackages,AppxPackage,_NetCoreFrameworkInjectionNeeded" `
+            "-getProperty:ProjectLockFile,MSBuildProjectExtensionsPath,ResolveNuGetPackages,AppxPackage,_NetCoreFrameworkInjectionNeeded,PlatformTarget,TargetArchitecture,TargetArch" `
             /p:Configuration=Release `
-            /p:Platform=x64
+            /p:Platform=x64 `
+            /p:PlatformTarget=x64
 
           if ($LASTEXITCODE -ne 0) {
             Write-Host "Property query failed; continuing with file inspection."
@@ -293,7 +295,6 @@ jobs:
             }
           }
 
-      # ADDED DIAGNOSTIC STEP
       - name: Check CoreRuntime architecture properties
         if: always()
         shell: pwsh
@@ -311,12 +312,13 @@ jobs:
             Write-Host "Expected targets file not found at: $targets"
           }
 
-          Write-Host "`n=== MSBuild architecture properties (evaluation) ==="
+          Write-Host "`n=== MSBuild architecture properties (with PlatformTarget=x64) ==="
 
           & msbuild $project `
             "-getProperty:_PlatformTargetForCoreRuntime,PlatformTarget,Platform,TargetArchitecture,TargetArch,TargetRuntime,TargetPlatformIdentifier" `
             /p:Configuration=Release `
-            /p:Platform=x64
+            /p:Platform=x64 `
+            /p:PlatformTarget=x64
 
           if ($LASTEXITCODE -ne 0) {
             Write-Host "MSBuild property evaluation failed; continuing with the build workflow."
@@ -340,6 +342,7 @@ jobs:
           msbuild $project /t:Build `
             /p:Configuration=Release `
             /p:Platform=x64 `
+            /p:PlatformTarget=x64 `
             /p:_NetCoreFrameworkInjectionNeeded=false `
             /p:AppxBundle=Never `
             /p:UapAppxPackageBuildMode=SideloadOnly `
@@ -356,7 +359,7 @@ jobs:
         if: success()
         uses: actions/upload-artifact@v4
         with:
-          name: XboxGlassMusic-APPX
+          name: Glassify-APPX
           path: |
             **/*.appx
             **/*.msix
@@ -368,7 +371,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: XboxGlassMusic-build-diagnostics
+          name: Glassify-build-diagnostics
           path: |
             **/build-diagnostic.log
           if-no-files-found: warn
