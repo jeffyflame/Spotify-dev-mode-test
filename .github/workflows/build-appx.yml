@@ -1,5 +1,5 @@
 
-name: Build XboxGlassMusic package
+name: Build XboxGlassMusic APPX
 
 on:
   workflow_dispatch:
@@ -12,6 +12,9 @@ on:
       - '**.csproj'
       - '**.sln'
       - '**.appxmanifest'
+      - '**.props'
+      - '**.targets'
+      - 'packages.config'
       - '.github/workflows/build-appx.yml'
 
 permissions:
@@ -28,84 +31,84 @@ jobs:
       - name: Setup MSBuild
         uses: microsoft/setup-msbuild@v2
 
-      - name: Locate solution
-        id: project
+      - name: Locate project
+        id: locate
         shell: pwsh
         run: |
-          $solution = Get-ChildItem `
-            -Path $env:GITHUB_WORKSPACE `
+          $root = $env:GITHUB_WORKSPACE
+
+          $project = Get-ChildItem `
+            -Path $root `
             -Recurse `
+            -File `
+            -Filter XboxGlassMusic.csproj |
+            Select-Object -First 1
+
+          if (-not $project) {
+            throw "XboxGlassMusic.csproj was not found."
+          }
+
+          $solution = Get-ChildItem `
+            -Path $root `
+            -Recurse `
+            -File `
             -Filter *.sln |
             Select-Object -First 1
 
           if (-not $solution) {
-            throw "No solution file found."
+            throw "No solution file was found."
           }
 
-          "solution=$($solution.FullName)" |
-            Out-File -FilePath $env:GITHUB_OUTPUT -Append
+          "projectPath=$($project.FullName)" |
+            Out-File $env:GITHUB_OUTPUT -Append
 
-      - name: Clean old build files
+          "projectDir=$($project.DirectoryName)" |
+            Out-File $env:GITHUB_OUTPUT -Append
+
+          "solutionPath=$($solution.FullName)" |
+            Out-File $env:GITHUB_OUTPUT -Append
+
+          Write-Host "Project: $($project.FullName)"
+          Write-Host "Solution: $($solution.FullName)"
+
+      - name: Clean previous build files
         shell: pwsh
         run: |
-          Get-ChildItem `
-            -Path $env:GITHUB_WORKSPACE `
-            -Directory `
-            -Recurse `
+          $root = $env:GITHUB_WORKSPACE
+
+          foreach ($folderName in @("bin", "obj")) {
+            Get-ChildItem `
+              -Path $root `
+              -Recurse `
+              -Directory `
+              -Force `
+              -Filter $folderName `
+              -ErrorAction SilentlyContinue |
+              Sort-Object {
+                $_.FullName.Length
+              } -Descending |
+              ForEach-Object {
+                Write-Host "Removing $($_.FullName)"
+                Remove-Item `
+                  -LiteralPath $_.FullName `
+                  -Recurse `
+                  -Force `
+                  -ErrorAction SilentlyContinue
+              }
+          }
+
+          New-Item `
+            -ItemType Directory `
             -Force `
-            -Filter bin `
-            -ErrorAction SilentlyContinue |
-            Sort-Object { $_.FullName.Length } -Descending |
-            ForEach-Object {
-              Remove-Item -LiteralPath $_.FullName -Recurse -Force -ErrorAction SilentlyContinue
-            }
-
-          Get-ChildItem `
-            -Path $env:GITHUB_WORKSPACE `
-            -Directory `
-            -Recurse `
-            -Force `
-            -Filter obj `
-            -ErrorAction SilentlyContinue |
-            Sort-Object { $_.FullName.Length } -Descending |
-            ForEach-Object {
-              Remove-Item -LiteralPath $_.FullName -Recurse -Force -ErrorAction SilentlyContinue
-            }
-
-      - name: Create temporary signing certificate
-        shell: pwsh
-        run: |
-          $cert = New-SelfSignedCertificate `
-            -Type Custom `
-            -Subject "CN=XboxGlassMusic" `
-            -KeyUsage DigitalSignature `
-            -FriendlyName "XboxGlassMusic temporary package certificate" `
-            -CertStoreLocation "Cert:\CurrentUser\My" `
-            -KeyAlgorithm RSA `
-            -KeyLength 2048 `
-            -HashAlgorithm SHA256 `
-            -NotAfter (Get-Date).AddYears(2)
-
-          $password = ConvertTo-SecureString `
-            -String "TemporaryBuildPassword123!" `
-            -Force `
-            -AsPlainText
-
-          Export-PfxCertificate `
-            -Cert $cert `
-            -FilePath "$env:RUNNER_TEMP\signing.pfx" `
-            -Password $password |
-            Out-Null
-
-          Export-Certificate `
-            -Cert $cert `
-            -FilePath "$env:RUNNER_TEMP\signing.cer" |
+            -Path "$root\artifacts" |
             Out-Null
 
       - name: Restore NuGet packages
         shell: pwsh
         run: |
-          msbuild "${{ steps.project.outputs.solution }}" `
+          $project = "${{ steps.locate.outputs.projectPath }}"
+
+          msbuild $project `
             /t:Restore `
             /p:Configuration=Release `
             /p:Platform=x64 `
@@ -115,69 +118,57 @@ jobs:
             throw "NuGet restore failed with exit code $LASTEXITCODE"
           }
 
-      - name: Diagnose NuGet assets
-        if: always()
+      - name: Remove legacy NuGet lock files
         shell: pwsh
         run: |
-          $files = Get-ChildItem `
-            -Path $env:GITHUB_WORKSPACE `
+          $root = $env:GITHUB_WORKSPACE
+
+          # Keep obj/project.assets.json.
+          # Remove only legacy project.lock.json files.
+          $locks = Get-ChildItem `
+            -Path $root `
             -Recurse `
             -File `
-            -Force `
-            -ErrorAction SilentlyContinue |
-            Where-Object {
-              $_.Name -in @(
-                "project.assets.json",
-                "project.nuget.cache",
-                "packages.lock.json",
-                "project.lock.json"
-              )
-            }
+            -Filter project.lock.json `
+            -ErrorAction SilentlyContinue
 
-          foreach ($file in $files) {
-            Write-Host "`n=== $($file.FullName) ==="
+          foreach ($file in $locks) {
+            Write-Host "Removing legacy lock file: $($file.FullName)"
 
-            if ($file.Name -eq "project.assets.json") {
-              try {
-                $assets = Get-Content $file.FullName -Raw |
-                  ConvertFrom-Json
-
-                Write-Host "TARGETS:"
-                $assets.targets.PSObject.Properties.Name
-
-                Write-Host "LIBRARIES:"
-                $assets.libraries.PSObject.Properties.Name
-
-                Write-Host "FRAMEWORKS:"
-                $assets.project.frameworks |
-                  ConvertTo-Json -Depth 8
-              }
-              catch {
-                Write-Host "Could not parse assets: $_"
-              }
-            }
+            Remove-Item `
+              -LiteralPath $file.FullName `
+              -Force
           }
 
-      - name: Build and package x64
+          Write-Host "Legacy lock-file cleanup complete."
+
+      - name: Build and create APPX package
         shell: pwsh
         run: |
+          $project = "${{ steps.locate.outputs.projectPath }}"
           $out = "$env:GITHUB_WORKSPACE\artifacts"
-          $log = "$env:RUNNER_TEMP\msbuild.log"
+          $log = "$env:RUNNER_TEMP\appx-build.log"
+          $packageDir = "$out\"
 
-          New-Item -ItemType Directory -Force -Path $out |
+          New-Item `
+            -ItemType Directory `
+            -Force `
+            -Path $out |
             Out-Null
 
-          msbuild "${{ steps.project.outputs.solution }}" `
-            /t:Build `
+          Write-Host "Building APPX package..."
+          Write-Host "Project: $project"
+          Write-Host "Output: $out"
+
+          & msbuild $project `
+            /t:AppxPackage `
             /m `
             /p:Configuration=Release `
             /p:Platform=x64 `
             /p:AppxBundle=Never `
             /p:UapAppxPackageBuildMode=SideloadOnly `
-            /p:AppxPackageSigningEnabled=true `
-            /p:PackageCertificateKeyFile="$env:RUNNER_TEMP\signing.pfx" `
-            /p:PackageCertificatePassword="TemporaryBuildPassword123!" `
-            /p:AppxPackageDir="$out\\" `
+            /p:AppxPackageSigningEnabled=false `
+            "/p:AppxPackageDir=$packageDir" `
             /v:diag *> $log
 
           $buildExitCode = $LASTEXITCODE
@@ -189,32 +180,31 @@ jobs:
 
             Select-String `
               -Path $log `
-              -Pattern "NetCoreFramework|requires the .NET Framework|error NU|WMC9999" `
-              -Context 5, 10
+              -Pattern "error |NetCoreFramework|requires the .NET Framework|WMC9999" `
+              -Context 3, 6
 
-            throw "MSBuild failed with exit code $buildExitCode"
+            throw "APPX packaging failed with exit code $buildExitCode"
           }
 
-          Copy-Item `
-            "$env:RUNNER_TEMP\signing.cer" `
-            "$out\XboxGlassMusic-signing.cer"
+          $packages = Get-ChildItem `
+            -Path $out `
+            -Recurse `
+            -File `
+            -Include *.appx, *.msix
 
-          Get-ChildItem $out -Recurse
+          if (-not $packages) {
+            Write-Host "Package output directory contents:"
+            Get-ChildItem $out -Recurse
 
-      - name: Upload NuGet diagnostic files
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: nuget-diagnostics
-          path: |
-            **/obj/project.assets.json
-            **/obj/project.nuget.cache
-            **/project.lock.json
-            **/packages.lock.json
-          if-no-files-found: warn
-          retention-days: 7
+            throw "Build succeeded but no .appx or .msix file was found in artifacts."
+          }
 
-      - name: Upload app package
+          Write-Host "Generated package files:"
+          $packages | ForEach-Object {
+            Write-Host $_.FullName
+          }
+
+      - name: Upload APPX package
         if: success()
         uses: actions/upload-artifact@v4
         with:
@@ -222,3 +212,12 @@ jobs:
           path: artifacts/**
           if-no-files-found: error
           retention-days: 30
+
+      - name: Upload build log for troubleshooting
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: XboxGlassMusic-build-log
+          path: ${{ runner.temp }}/appx-build.log
+          if-no-files-found: ignore
+          retention-days: 7
