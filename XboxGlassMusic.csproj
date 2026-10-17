@@ -20,7 +20,7 @@
     <AppxBundle>Never</AppxBundle>
     <GenerateAppInstallerFile>false</GenerateAppInstallerFile>
     <AppxManifest>Package.appxmanifest</AppxManifest>
-    <RuntimeIdentifiers>win10</RuntimeIdentifiers>
+    <RuntimeIdentifiers>win10-x64</RuntimeIdentifiers>
   </PropertyGroup>
 
   <PropertyGroup Condition="'$(Configuration)|$(Platform)' == 'Debug|x64'">
