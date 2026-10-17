@@ -1,3 +1,4 @@
+
 name: Build XboxGlassMusic APPX
 
 on:
@@ -17,156 +18,98 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
-  - name: Setup MSBuild
-    uses: microsoft/setup-msbuild@v2
-  - name: Locate UWP project
-    id: locate
-    shell: pwsh
-    run: |
-      $project = Get-ChildItem $env:GITHUB_WORKSPACE -Filter "XboxGlassMusic.csproj" -Recurse |
-        Select-Object -First 1
-      if (-not $project) {
-        throw "XboxGlassMusic.csproj was not found."
-      }
-      $solution = Get-ChildItem $env:GITHUB_WORKSPACE -Filter "XboxGlassMusic.sln" -Recurse |
-        Select-Object -First 1
-      "projectPath=$($project.FullName)" >> $env:GITHUB_OUTPUT
-      "projectDir=$($project.DirectoryName)" >> $env:GITHUB_OUTPUT
-      if ($solution) {
-        "solutionPath=$($solution.FullName)" >> $env:GITHUB_OUTPUT
-      }
-      Write-Host "Project: $($project.FullName)"
-      if ($solution) {
-        Write-Host "Solution: $($solution.FullName)"
-      }
-  - name: Clean project outputs
-    shell: pwsh
-    run: |
-      $projectDir = "${{ steps.locate.outputs.projectDir }}"
-      foreach ($folder in @("bin", "obj")) {
-        $path = Join-Path $projectDir $folder
-        if (Test-Path $path) {
-          Remove-Item $path -Recurse -Force
-          Write-Host "Removed $path"
-        }
-      }
-  - name: Restore NuGet packages
-    shell: pwsh
-    run: |
-      $project = "${{ steps.locate.outputs.projectPath }}"
-      msbuild $project /t:Restore /v:minimal `
-        /p:Configuration=Release `
-        /p:Platform=x64
-      if ($LASTEXITCODE -ne 0) {
-        throw "NuGet restore failed."
-      }
-  - name: Remove legacy lock file
-    shell: pwsh
-    run: |
-      $projectDir = "${{ steps.locate.outputs.projectDir }}"
-      $legacyLock = Join-Path $projectDir "project.lock.json"
-      if (Test-Path $legacyLock) {
-        Remove-Item $legacyLock -Force
-        Write-Host "Removed legacy project.lock.json"
-      } else {
-        Write-Host "No legacy project.lock.json found."
-      }
-  - name: Diagnose UWP NuGet restore
-    shell: pwsh
-    run: |
-      $projectDir = "${{ steps.locate.outputs.projectDir }}"
-      $assets = Join-Path $projectDir "obj\project.assets.json"
-      if (-not (Test-Path $assets)) {
-        throw "project.assets.json was not found after restore."
-      }
-      $data = Get-Content $assets -Raw | ConvertFrom-Json
-      Write-Host "=== Restored target frameworks ==="
-      $data.targets.PSObject.Properties.Name
-      Write-Host "`n=== Declared frameworks ==="
-      $data.project.frameworks.PSObject.Properties.Name
-      Write-Host "`n=== .NET Framework-related package entries ==="
-      $data.targets.PSObject.Properties | ForEach-Object {
-        $targetName = $_.Name
-        $_.Value.PSObject.Properties |
-          Where-Object {
-            $_.Name -match "framework|netfx|referenceassemblies"
-          } |
-          ForEach-Object {
-            Write-Host "$targetName : $($_.Name)"
+
+      - name: Setup MSBuild
+        uses: microsoft/setup-msbuild@v2
+
+      - name: Locate UWP project
+        id: locate
+        shell: pwsh
+        run: |
+          $project = Get-ChildItem $env:GITHUB_WORKSPACE -Filter "XboxGlassMusic.csproj" -Recurse |
+            Select-Object -First 1
+
+          if (-not $project) {
+            throw "XboxGlassMusic.csproj was not found."
           }
-      }
-      Write-Host "`n=== Direct project dependencies ==="
-      $data.project.frameworks.PSObject.Properties | ForEach-Object {
-        $frameworkName = $_.Name
-        Write-Host "Framework: $frameworkName"
-        $_.Value.dependencies.PSObject.Properties |
-          ForEach-Object {
-            Write-Host "  $($_.Name) $($_.Value.version)"
+
+          $solution = Get-ChildItem $env:GITHUB_WORKSPACE -Filter "XboxGlassMusic.sln" -Recurse |
+            Select-Object -First 1
+
+          "projectPath=$($project.FullName)" >> $env:GITHUB_OUTPUT
+          "projectDir=$($project.DirectoryName)" >> $env:GITHUB_OUTPUT
+
+          if ($solution) {
+            "solutionPath=$($solution.FullName)" >> $env:GITHUB_OUTPUT
           }
-      }
-  - name: Diagnose framework injection
-    if: always()
-    shell: pwsh
-    run: |
-      $project = "${{ steps.locate.outputs.projectPath }}"
-      $projectDir = "${{ steps.locate.outputs.projectDir }}"
-      Write-Host "=== Relevant MSBuild properties ==="
-      & msbuild $project `
-        "-getProperty:ProjectLockFile,MSBuildProjectExtensionsPath,ResolveNuGetPackages,AppxPackage,_NetCoreFrameworkInjectionNeeded" `
-        /p:Configuration=Release `
-        /p:Platform=x64
-      if ($LASTEXITCODE -ne 0) {
-        Write-Host "Property query failed; continuing with file inspection."
-      }
-      Write-Host "`n=== Files in project obj directory ==="
-      $obj = Join-Path $projectDir "obj"
-      if (Test-Path $obj) {
-        Get-ChildItem $obj -Recurse -File |
-          Where-Object {
-            $_.Name -in @(
-              "project.lock.json",
-              "project.assets.json",
-              "packages.lock.json"
-            )
-          } |
-          ForEach-Object {
-            Write-Host $_.FullName
+
+          Write-Host "Project: $($project.FullName)"
+          if ($solution) {
+            Write-Host "Solution: $($solution.FullName)"
           }
-      } else {
-        Write-Host "No obj directory found."
-      }
-      Write-Host "`n=== Inspect restored dependency graph ==="
-      $assets = Join-Path $projectDir "obj\project.assets.json"
-      if (Test-Path $assets) {
-        try {
+
+      - name: Clean project outputs
+        shell: pwsh
+        run: |
+          $projectDir = "${{ steps.locate.outputs.projectDir }}"
+
+          foreach ($folder in @("bin", "obj")) {
+            $path = Join-Path $projectDir $folder
+
+            if (Test-Path $path) {
+              Remove-Item $path -Recurse -Force
+              Write-Host "Removed $path"
+            }
+          }
+
+      - name: Restore NuGet packages
+        shell: pwsh
+        run: |
+          $project = "${{ steps.locate.outputs.projectPath }}"
+
+          msbuild $project /t:Restore /v:minimal `
+            /p:Configuration=Release `
+            /p:Platform=x64
+
+          if ($LASTEXITCODE -ne 0) {
+            throw "NuGet restore failed."
+          }
+
+      - name: Remove legacy lock file
+        shell: pwsh
+        run: |
+          $projectDir = "${{ steps.locate.outputs.projectDir }}"
+          $legacyLock = Join-Path $projectDir "project.lock.json"
+
+          if (Test-Path $legacyLock) {
+            Remove-Item $legacyLock -Force
+            Write-Host "Removed legacy project.lock.json"
+          } else {
+            Write-Host "No legacy project.lock.json found."
+          }
+
+      - name: Diagnose UWP NuGet restore
+        shell: pwsh
+        run: |
+          $projectDir = "${{ steps.locate.outputs.projectDir }}"
+          $assets = Join-Path $projectDir "obj\project.assets.json"
+
+          if (-not (Test-Path $assets)) {
+            throw "project.assets.json was not found after restore."
+          }
+
           $data = Get-Content $assets -Raw | ConvertFrom-Json
-          Write-Host "`n=== ALL RESTORED PACKAGES ==="
-          $data.libraries.PSObject.Properties |
-            ForEach-Object {
-              Write-Host $_.Name
-            }
-          Write-Host "`n=== ALL TARGET PACKAGE DEPENDENCIES ==="
-          $data.targets.PSObject.Properties | ForEach-Object {
-            Write-Host "`nTarget: $($_.Name)"
-            $_.Value.PSObject.Properties | ForEach-Object {
-              $package = $_.Name
-              $dependencies = $_.Value.dependencies
-              Write-Host "Package: $package"
-              if ($dependencies) {
-                $dependencies.PSObject.Properties |
-                  ForEach-Object {
-                    Write-Host "  -> $($_.Name) $($_.Value)"
-                  }
-              }
-            }
-          }
-          Write-Host "`n=== Restored target frameworks ==="
+
+          Write-Host "=== Restored target frameworks ==="
           $data.targets.PSObject.Properties.Name
+
           Write-Host "`n=== Declared frameworks ==="
           $data.project.frameworks.PSObject.Properties.Name
+
           Write-Host "`n=== .NET Framework-related package entries ==="
           $data.targets.PSObject.Properties | ForEach-Object {
             $targetName = $_.Name
+
             $_.Value.PSObject.Properties |
               Where-Object {
                 $_.Name -match "framework|netfx|referenceassemblies"
@@ -175,93 +118,170 @@ jobs:
                 Write-Host "$targetName : $($_.Name)"
               }
           }
+
           Write-Host "`n=== Direct project dependencies ==="
           $data.project.frameworks.PSObject.Properties | ForEach-Object {
             $frameworkName = $_.Name
             Write-Host "Framework: $frameworkName"
+
             $_.Value.dependencies.PSObject.Properties |
               ForEach-Object {
                 Write-Host "  $($_.Name) $($_.Value.version)"
               }
           }
-        }
-        catch {
-          Write-Host "Failed to inspect assets file: $_"
-          throw
-        }
-      } else {
-        Write-Host "project.assets.json was not found."
-      }
-  - name: Inspect CoreRuntime task definition
-    if: always()
-    shell: pwsh
-    run: |
-      $packageRoot = "C:\Program Files (x86)\Microsoft SDKs\UWPNuGetPackages\microsoft.net.uwpcoreruntimesdk"
-      if (-not (Test-Path $packageRoot)) {
-        Write-Host "CoreRuntime package directory not found: $packageRoot"
-        $sdkRoot = "C:\Program Files (x86)\Microsoft SDKs\UWPNuGetPackages"
-        if (Test-Path $sdkRoot) {
-          Get-ChildItem $sdkRoot -Directory |
-            Where-Object { $_.Name -match "coreruntime" } |
-            ForEach-Object { Write-Host $_.FullName }
-        }
-        exit 0
-      }
-      $files = Get-ChildItem $packageRoot -Filter "Microsoft.Net.CoreRuntime.targets" -Recurse -File
-      if (-not $files) {
-        Write-Host "No Microsoft.Net.CoreRuntime.targets file found."
-        exit 0
-      }
-      foreach ($file in $files) {
-        Write-Host "`n=== TARGETS FILE: $($file.FullName) ==="
-        $lines = Get-Content $file.FullName
-        for ($i = 0; $i -lt $lines.Length; $i++) {
-          if ($lines[$i] -match "WireUpCoreRuntime|TargetArch|ComputeWireUpCoreRuntimeParameters") {
-            $start = [Math]::Max(0, $i - 8)
-            $end = [Math]::Min($lines.Length - 1, $i + 12)
-            for ($j = $start; $j -le $end; $j++) {
-              "{0}: {1}" -f ($j + 1), $lines[$j]
-            }
-            Write-Host "------------------------------"
+
+      - name: Diagnose framework injection
+        if: always()
+        shell: pwsh
+        run: |
+          $project = "${{ steps.locate.outputs.projectPath }}"
+          $projectDir = "${{ steps.locate.outputs.projectDir }}"
+
+          Write-Host "=== Relevant MSBuild properties ==="
+
+          & msbuild $project `
+            "-getProperty:ProjectLockFile,MSBuildProjectExtensionsPath,ResolveNuGetPackages,AppxPackage,_NetCoreFrameworkInjectionNeeded" `
+            /p:Configuration=Release `
+            /p:Platform=x64
+
+          if ($LASTEXITCODE -ne 0) {
+            Write-Host "Property query failed; continuing with file inspection."
           }
-        }
-      }
-  - name: Build and create APPX package
-    shell: pwsh
-    run: |
-      $project = "${{ steps.locate.outputs.projectPath }}"
-      $projectDir = "${{ steps.locate.outputs.projectDir }}"
-      $packageDir = Join-Path $projectDir "AppxPackages"
-      New-Item -ItemType Directory -Path $packageDir -Force | Out-Null
-      msbuild $project /t:Build `
-        /p:Configuration=Release `
-        /p:Platform=x64 `
-        /p:_NetCoreFrameworkInjectionNeeded=false `
-        /p:AppxBundle=Never `
-        /p:UapAppxPackageBuildMode=SideloadOnly `
-        /p:AppxPackageSigningEnabled=false `
-        "/p:AppxPackageDir=$packageDir\" `
-        /v:diag 2>&1 |
-          Tee-Object -FilePath (Join-Path $projectDir "build-diagnostic.log")
-      if ($LASTEXITCODE -ne 0) {
-        throw "Build failed. See build-diagnostic.log for details."
-      }
-  - name: Upload APPX artifacts
-    if: success()
-    uses: actions/upload-artifact@v4
-    with:
-      name: XboxGlassMusic-APPX
-      path: |
-        **/*.appx
-        **/*.msix
-        **/*.appxbundle
-        **/*.msixbundle
-      if-no-files-found: error
-  - name: Upload diagnostic build log
-    if: always()
-    uses: actions/upload-artifact@v4
-    with:
-      name: XboxGlassMusic-build-diagnostics
-      path: |
-        **/build-diagnostic.log
-      if-no-files-found: warn
+
+          Write-Host "`n=== Files in project obj directory ==="
+
+          $obj = Join-Path $projectDir "obj"
+
+          if (Test-Path $obj) {
+            Get-ChildItem $obj -Recurse -File |
+              Where-Object {
+                $_.Name -in @(
+                  "project.lock.json",
+                  "project.assets.json",
+                  "packages.lock.json"
+                )
+              } |
+              ForEach-Object {
+                Write-Host $_.FullName
+              }
+          } else {
+            Write-Host "No obj directory found."
+          }
+
+          Write-Host "`n=== Inspect restored dependency graph ==="
+
+          $assets = Join-Path $projectDir "obj\project.assets.json"
+
+          if (Test-Path $assets) {
+            try {
+              $data = Get-Content $assets -Raw | ConvertFrom-Json
+
+              Write-Host "`n=== ALL RESTORED PACKAGES ==="
+              $data.libraries.PSObject.Properties |
+                ForEach-Object {
+                  Write-Host $_.Name
+                }
+
+              Write-Host "`n=== ALL TARGET PACKAGE DEPENDENCIES ==="
+              $data.targets.PSObject.Properties | ForEach-Object {
+                Write-Host "`nTarget: $($_.Name)"
+
+                $_.Value.PSObject.Properties | ForEach-Object {
+                  $package = $_.Name
+                  $dependencies = $_.Value.dependencies
+
+                  Write-Host "Package: $package"
+
+                  if ($dependencies) {
+                    $dependencies.PSObject.Properties |
+                      ForEach-Object {
+                        Write-Host "  -> $($_.Name) $($_.Value)"
+                      }
+                  }
+                }
+              }
+
+              Write-Host "`n=== Restored target frameworks ==="
+              $data.targets.PSObject.Properties.Name
+
+              Write-Host "`n=== Declared frameworks ==="
+              $data.project.frameworks.PSObject.Properties.Name
+
+              Write-Host "`n=== .NET Framework-related package entries ==="
+              $data.targets.PSObject.Properties | ForEach-Object {
+                $targetName = $_.Name
+
+                $_.Value.PSObject.Properties |
+                  Where-Object {
+                    $_.Name -match "framework|netfx|referenceassemblies"
+                  } |
+                  ForEach-Object {
+                    Write-Host "$targetName : $($_.Name)"
+                  }
+              }
+
+              Write-Host "`n=== Direct project dependencies ==="
+              $data.project.frameworks.PSObject.Properties | ForEach-Object {
+                $frameworkName = $_.Name
+                Write-Host "Framework: $frameworkName"
+
+                $_.Value.dependencies.PSObject.Properties |
+                  ForEach-Object {
+                    Write-Host "  $($_.Name) $($_.Value.version)"
+                  }
+              }
+            }
+            catch {
+              Write-Host "Failed to inspect assets file: $_"
+              throw
+            }
+          } else {
+            Write-Host "project.assets.json was not found."
+          }
+
+      - name: Build and create APPX package
+        shell: pwsh
+        run: |
+          $project = "${{ steps.locate.outputs.projectPath }}"
+          $projectDir = "${{ steps.locate.outputs.projectDir }}"
+          $packageDir = Join-Path $projectDir "AppxPackages"
+
+          New-Item -ItemType Directory -Path $packageDir -Force | Out-Null
+
+          msbuild $project /t:Build `
+            /p:Configuration=Release `
+            /p:Platform=x64 `
+            /p:_NetCoreFrameworkInjectionNeeded=false `
+            /p:AppxBundle=Never `
+            /p:UapAppxPackageBuildMode=SideloadOnly `
+            /p:AppxPackageSigningEnabled=false `
+            "/p:AppxPackageDir=$packageDir\" `
+            /v:diag 2>&1 |
+              Tee-Object -FilePath (Join-Path $projectDir "build-diagnostic.log")
+
+          if ($LASTEXITCODE -ne 0) {
+            throw "Build failed. See build-diagnostic.log for details."
+          }
+
+      - name: Upload APPX artifacts
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: XboxGlassMusic-APPX
+          path: |
+            **/*.appx
+            **/*.msix
+            **/*.appxbundle
+            **/*.msixbundle
+          if-no-files-found: error
+
+      - name: Upload diagnostic build log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: XboxGlassMusic-build-diagnostics
+          path: |
+            **/build-diagnostic.log
+          if-no-files-found: warn
+
+Ur code doesn’t work 
