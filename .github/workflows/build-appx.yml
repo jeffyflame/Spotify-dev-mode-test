@@ -145,61 +145,53 @@ jobs:
       - name: Build and create APPX package
         shell: pwsh
         run: |
-          $project = "${{ steps.locate.outputs.projectPath }}"
+          $solution = "${{ steps.locate.outputs.solutionPath }}"
           $out = "$env:GITHUB_WORKSPACE\artifacts"
           $log = "$env:RUNNER_TEMP\appx-build.log"
-          $packageDir = "$out\"
 
-          New-Item `
-            -ItemType Directory `
-            -Force `
-            -Path $out |
-            Out-Null
+          New-Item -ItemType Directory -Force -Path $out | Out-Null
 
-          Write-Host "Building APPX package..."
-          Write-Host "Project: $project"
+          Write-Host "Building UWP solution and generating APPX..."
+          Write-Host "Solution: $solution"
           Write-Host "Output: $out"
 
-          & msbuild $project `
-            /t:AppxPackage `
+          & msbuild $solution `
+            /t:Build `
             /m `
             /p:Configuration=Release `
             /p:Platform=x64 `
             /p:AppxBundle=Never `
             /p:UapAppxPackageBuildMode=SideloadOnly `
             /p:AppxPackageSigningEnabled=false `
-            "/p:AppxPackageDir=$packageDir" `
+            "/p:AppxPackageDir=$out\\" `
             /v:diag *> $log
 
           $buildExitCode = $LASTEXITCODE
 
-          Get-Content $log -Tail 100
+          Get-Content $log -Tail 80
 
           if ($buildExitCode -ne 0) {
-            Write-Host "Relevant build errors:"
-
+            Write-Host "Build errors:"
             Select-String `
               -Path $log `
-              -Pattern "error |NetCoreFramework|requires the .NET Framework|WMC9999" `
+              -Pattern "error |NetCoreFramework|requires the .NET Framework" `
               -Context 3, 6
 
-            throw "APPX packaging failed with exit code $buildExitCode"
+            throw "Build/package failed with exit code $buildExitCode"
           }
 
           $packages = Get-ChildItem `
             -Path $out `
             -Recurse `
-            -File `
-            -Include *.appx, *.msix
+            -File |
+            Where-Object { $_.Extension -in @(".appx", ".msix") }
 
           if (-not $packages) {
-            Write-Host "Package output directory contents:"
             Get-ChildItem $out -Recurse
-
-            throw "Build succeeded but no .appx or .msix file was found in artifacts."
+            throw "Build completed, but no APPX/MSIX package was generated."
           }
 
-          Write-Host "Generated package files:"
+          Write-Host "Generated packages:"
           $packages | ForEach-Object {
             Write-Host $_.FullName
           }
